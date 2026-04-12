@@ -1,0 +1,196 @@
+version: '3.8'
+
+services:
+
+  # ============= API GATEWAY =============
+  api-gateway:
+    build: ./api-gateway
+    container_name: api-gateway
+    environment:
+      STAFF_SERVICE_URL: http://staff-service:8001
+      CUSTOMER_SERVICE_URL: http://customer-service:8002
+      CART_SERVICE_URL: http://cart-service:8003
+      PRODUCT_SERVICE_URL: http://product-service:8004
+      ALLOWED_HOSTS: "*"
+      PROXY_TIMEOUT: 30
+    ports:
+      - "80:80"
+    depends_on:
+      - staff-service
+      - customer-service
+      - cart-service
+      - product-service
+    networks:
+      - microservice-network
+    volumes:
+      - ./api-gateway:/app
+
+  # ============= DATABASES =============
+  
+  # MySQL for Staff Service
+  staff-db:
+    image: mysql:8.0
+    container_name: staff-db
+    environment:
+      MYSQL_ROOT_PASSWORD: password
+      MYSQL_DATABASE: staff_db
+    volumes:
+      - staff_db_volume:/var/lib/mysql
+    ports:
+      - "3306:3306"
+    networks:
+      - microservice-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+
+  # MySQL for Customer Service
+  customer-db:
+    image: mysql:8.0
+    container_name: customer-db
+    environment:
+      MYSQL_ROOT_PASSWORD: password
+      MYSQL_DATABASE: customer_db
+    volumes:
+      - customer_db_volume:/var/lib/mysql
+    ports:
+      - "3307:3306"
+    networks:
+      - microservice-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+
+  # PostgreSQL for Cart Service
+  cart-db:
+    image: postgres:15-alpine
+    container_name: cart-db
+    environment:
+      POSTGRES_DB: cart_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - cart_db_volume:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - microservice-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      timeout: 20s
+      retries: 10
+
+  # PostgreSQL for Product Service
+  product-db:
+    image: postgres:15-alpine
+    container_name: product-db
+    environment:
+      POSTGRES_DB: product_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - product_db_volume:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    networks:
+      - microservice-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      timeout: 20s
+      retries: 10
+
+  # ============= DJANGO SERVICES =============
+
+  # Staff Service
+  staff-service:
+    build: ./staff-service
+    container_name: staff-service
+    environment:
+      DB_NAME: staff_db
+      DB_USER: root
+      DB_PASSWORD: password
+      DB_HOST: staff-db
+      DB_PORT: 3306
+    ports:
+      - "8001:8001"
+    depends_on:
+      staff-db:
+        condition: service_healthy
+    networks:
+      - microservice-network
+    volumes:
+      - ./staff-service:/app
+
+  # Customer Service
+  customer-service:
+    build: ./customer-service
+    container_name: customer-service
+    environment:
+      DB_NAME: customer_db
+      DB_USER: root
+      DB_PASSWORD: password
+      DB_HOST: customer-db
+      DB_PORT: 3306
+    ports:
+      - "8002:8002"
+    depends_on:
+      customer-db:
+        condition: service_healthy
+    networks:
+      - microservice-network
+    volumes:
+      - ./customer-service:/app
+
+  # Cart Service
+  cart-service:
+    build: ./cart-service
+    container_name: cart-service
+    environment:
+      DB_NAME: cart_db
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_HOST: cart-db
+      DB_PORT: 5432
+      PRODUCT_SERVICE_URL: http://product-service:8004
+    ports:
+      - "8003:8003"
+    depends_on:
+      cart-db:
+        condition: service_healthy
+    networks:
+      - microservice-network
+    volumes:
+      - ./cart-service:/app
+
+  # Product Service
+  product-service:
+    build: ./product-service
+    container_name: product-service
+    environment:
+      DB_NAME: product_db
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_HOST: product-db
+      DB_PORT: 5432
+      ALLOWED_HOSTS: "*"
+    ports:
+      - "8004:8004"
+    depends_on:
+      product-db:
+        condition: service_healthy
+    networks:
+      - microservice-network
+    volumes:
+      - ./product-service:/app
+
+networks:
+  microservice-network:
+    driver: bridge
+
+volumes:
+  staff_db_volume:
+  customer_db_volume:
+  cart_db_volume:
+  product_db_volume:
