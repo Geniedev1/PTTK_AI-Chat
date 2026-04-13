@@ -18,6 +18,8 @@ class ProductApplicationService:
         entity = Product(
             id=None,
             name=command.name,
+            slug=command.slug,
+            short_description=command.short_description,
             description=command.description,
             category_id=command.category_id,
             brand_id=command.brand_id,
@@ -26,6 +28,8 @@ class ProductApplicationService:
             stock=command.stock,
             attributes=Attributes(command.attributes),
             is_active=command.is_active,
+            tags=command.tags,
+            image_urls=command.image_urls,
         )
         return self.repository.create(entity)
 
@@ -33,6 +37,8 @@ class ProductApplicationService:
         entity = Product(
             id=product_id,
             name=command.name,
+            slug=command.slug,
+            short_description=command.short_description,
             description=command.description,
             category_id=command.category_id,
             brand_id=command.brand_id,
@@ -41,6 +47,8 @@ class ProductApplicationService:
             stock=command.stock,
             attributes=Attributes(command.attributes),
             is_active=command.is_active,
+            tags=command.tags,
+            image_urls=command.image_urls,
         )
         return self.repository.update(product_id, entity)
 
@@ -58,6 +66,10 @@ class ProductApplicationService:
                 "brand_id": query.brand_id,
                 "in_stock": query.in_stock,
                 "search": query.search,
+                "min_price": query.min_price,
+                "max_price": query.max_price,
+                "sort_by": query.sort_by,
+                "tag": query.tag,
             }
         )
 

@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from dataclasses import dataclass
 
 
@@ -8,3 +10,7 @@ class FilterProductsQuery:
     brand_id: int | None = None
     in_stock: bool | None = None
     search: str | None = None
+    min_price: Decimal | None = None
+    max_price: Decimal | None = None
+    sort_by: str | None = None
+    tag: str | None = None

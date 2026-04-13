@@ -108,6 +108,7 @@ services:
     build: ./staff-service
     container_name: staff-service
     environment:
+      INTERNAL_ADMIN_KEY: ${INTERNAL_ADMIN_KEY:-change-this-in-dev}
       DB_NAME: staff_db
       DB_USER: root
       DB_PASSWORD: password
@@ -169,6 +170,7 @@ services:
     build: ./product-service
     container_name: product-service
     environment:
+      INTERNAL_ADMIN_KEY: ${INTERNAL_ADMIN_KEY:-change-this-in-dev}
       DB_NAME: product_db
       DB_USER: postgres
       DB_PASSWORD: postgres

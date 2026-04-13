@@ -1,7 +1,8 @@
 from django.db import models
 
 class Cart(models.Model):
-    customer_id = models.IntegerField()
+    customer_id = models.IntegerField(null=True, blank=True)
+    session_key = models.CharField(max_length=40, null=True, blank=True, db_index=True)
     product_id = models.IntegerField()
     quantity = models.PositiveIntegerField(default=1)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -9,10 +10,12 @@ class Cart(models.Model):
     
     class Meta:
         ordering = ['-created_at']
-        unique_together = ['customer_id', 'product_id']
+        constraints = [
+            models.UniqueConstraint(fields=['session_key', 'product_id'], name='unique_cart_session_product'),
+        ]
     
     def __str__(self):
-        return f"Cart - Customer {self.customer_id} - product:{self.product_id}"
+        return f"Cart - Session {self.session_key or 'legacy'} - product:{self.product_id}"
 
 class CartSession(models.Model):
     """Track carts by session if needed"""

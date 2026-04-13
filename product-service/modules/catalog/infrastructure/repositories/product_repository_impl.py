@@ -22,6 +22,8 @@ class DjangoProductRepository(ProductRepository):
         return Product(
             id=instance.id,
             name=instance.name,
+            slug=instance.slug,
+            short_description=instance.short_description,
             description=instance.description,
             category_id=instance.category_id,
             brand_id=instance.brand_id,
@@ -30,12 +32,16 @@ class DjangoProductRepository(ProductRepository):
             stock=instance.stock,
             attributes=Attributes(instance.attributes or {}),
             is_active=instance.is_active,
+            tags=list(instance.tags or []),
+            image_urls=list(instance.image_urls or []),
             variants=variants,
         )
 
     def create(self, product: Product) -> Product:
         instance = ProductModel.objects.create(
             name=product.name,
+            slug=product.slug,
+            short_description=product.short_description,
             description=product.description,
             category_id=product.category_id,
             brand_id=product.brand_id,
@@ -43,6 +49,8 @@ class DjangoProductRepository(ProductRepository):
             base_price=product.base_price,
             stock=product.stock,
             attributes=product.attributes.as_dict(),
+            tags=product.tags,
+            image_urls=product.image_urls,
             is_active=product.is_active,
         )
         return self._to_entity(instance)
@@ -50,6 +58,8 @@ class DjangoProductRepository(ProductRepository):
     def update(self, product_id: int, product: Product) -> Product:
         instance = ProductModel.objects.get(pk=product_id)
         instance.name = product.name
+        instance.slug = product.slug
+        instance.short_description = product.short_description
         instance.description = product.description
         instance.category_id = product.category_id
         instance.brand_id = product.brand_id
@@ -57,6 +67,8 @@ class DjangoProductRepository(ProductRepository):
         instance.base_price = product.base_price
         instance.stock = product.stock
         instance.attributes = product.attributes.as_dict()
+        instance.tags = product.tags
+        instance.image_urls = product.image_urls
         instance.is_active = product.is_active
         instance.save()
         instance.refresh_from_db()
@@ -82,8 +94,18 @@ class DjangoProductRepository(ProductRepository):
             queryset = queryset.filter(brand_id=filters["brand_id"])
         if filters.get("in_stock") is True:
             queryset = queryset.in_stock()
+        if filters.get("min_price") is not None:
+            queryset = queryset.filter(base_price__gte=filters["min_price"])
+        if filters.get("max_price") is not None:
+            queryset = queryset.filter(base_price__lte=filters["max_price"])
+        if filters.get("tag"):
+            queryset = queryset.filter(tags__icontains=filters["tag"])
         if filters.get("search"):
-            queryset = queryset.filter(name__icontains=filters["search"])
+            search = filters["search"]
+            queryset = queryset.filter_search(search)
+
+        sort_by = filters.get("sort_by") or "newest"
+        queryset = queryset.sort_by_option(sort_by)
 
         return [self._to_entity(instance) for instance in queryset]
 

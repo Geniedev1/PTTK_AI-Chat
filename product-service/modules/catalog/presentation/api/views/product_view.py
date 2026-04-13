@@ -1,6 +1,7 @@
+from decimal import Decimal, InvalidOperation
+
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
-from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
 from ....application.commands.create_product import CreateProductCommand
@@ -11,11 +12,12 @@ from ....application.queries.get_product import GetProductQuery
 from ....application.queries.list_products import ListProductsQuery
 from ....application.services.product_service import ProductApplicationService
 from ....infrastructure.repositories.product_repository_impl import DjangoProductRepository
+from ..permissions import CatalogWritePermission, has_catalog_admin_access
 from ..serializers.product_serializer import ProductReadSerializer, ProductWriteSerializer, VariantSerializer
 
 
 class ProductViewSet(viewsets.ViewSet):
-    permission_classes = [AllowAny]
+    permission_classes = [CatalogWritePermission]
     repository_class = DjangoProductRepository
     service_class = ProductApplicationService
 
@@ -27,7 +29,10 @@ class ProductViewSet(viewsets.ViewSet):
         return {
             "id": product.id,
             "name": product.name,
+            "slug": product.slug,
+            "short_description": product.short_description,
             "description": product.description,
+            "full_description": product.description,
             "category_id": product.category_id,
             "brand_id": product.brand_id,
             "product_type_id": product.product_type_id,
@@ -35,6 +40,10 @@ class ProductViewSet(viewsets.ViewSet):
             "stock": product.stock,
             "attributes": product.attributes.as_dict(),
             "is_active": product.is_active,
+            "status": product.status(),
+            "tags": product.tags,
+            "image_urls": product.image_urls,
+            "has_stock": product.has_stock(),
             "variants": [
                 {
                     "id": variant.id,
@@ -52,30 +61,62 @@ class ProductViewSet(viewsets.ViewSet):
     def _optional_int(self, value):
         return int(value) if value not in (None, "") else None
 
+    def _optional_decimal(self, value):
+        if value in (None, ""):
+            return None
+        try:
+            return Decimal(str(value))
+        except (InvalidOperation, TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid decimal value: {value}") from exc
+
+    def _build_filter_query(self, request):
+        return FilterProductsQuery(
+            category_id=self._optional_int(request.query_params.get("category_id")),
+            product_type_id=self._optional_int(request.query_params.get("product_type_id")),
+            brand_id=self._optional_int(request.query_params.get("brand_id")),
+            in_stock=(request.query_params.get("in_stock") == "true") if "in_stock" in request.query_params else None,
+            search=request.query_params.get("search"),
+            min_price=self._optional_decimal(request.query_params.get("min_price")),
+            max_price=self._optional_decimal(request.query_params.get("max_price")),
+            sort_by=request.query_params.get("sort_by"),
+            tag=request.query_params.get("tag"),
+        )
+
     def list(self, request):
         has_filter_params = any(
-            key in request.query_params for key in ["category_id", "product_type_id", "brand_id", "in_stock", "search"]
+            key in request.query_params
+            for key in ["category_id", "product_type_id", "brand_id", "in_stock", "search", "min_price", "max_price", "sort_by", "tag"]
         )
         if has_filter_params:
-            query = FilterProductsQuery(
-                category_id=self._optional_int(request.query_params.get("category_id")),
-                product_type_id=self._optional_int(request.query_params.get("product_type_id")),
-                brand_id=self._optional_int(request.query_params.get("brand_id")),
-                in_stock=(request.query_params.get("in_stock") == "true") if "in_stock" in request.query_params else None,
-                search=request.query_params.get("search"),
-            )
+            try:
+                query = self._build_filter_query(request)
+            except ValueError as exc:
+                return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
             products = self.service.filter_products(query)
         else:
-            include_inactive = request.query_params.get("include_inactive") == "true"
+            include_inactive = (
+                request.query_params.get("include_inactive") == "true" and has_catalog_admin_access(request)
+            )
             products = self.service.list_products(ListProductsQuery(include_inactive=include_inactive))
         serializer = ProductReadSerializer([self._serialize_product(product) for product in products], many=True)
         return Response(serializer.data)
 
     def retrieve(self, request, pk=None):
         product = self.service.get_product(GetProductQuery(product_id=int(pk)))
-        if not product:
+        if not product or (not product.is_active and not has_catalog_admin_access(request)):
             return Response({"detail": "Product not found."}, status=status.HTTP_404_NOT_FOUND)
         serializer = ProductReadSerializer(self._serialize_product(product))
+        return Response(serializer.data)
+
+    @action(detail=False, methods=["get"])
+    def search(self, request):
+        try:
+            query = self._build_filter_query(request)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        products = self.service.filter_products(query)
+        serializer = ProductReadSerializer([self._serialize_product(product) for product in products], many=True)
         return Response(serializer.data)
 
     def create(self, request):

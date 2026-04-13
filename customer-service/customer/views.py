@@ -1,4 +1,4 @@
-from rest_framework import viewsets, status
+from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.authentication import TokenAuthentication
@@ -13,11 +13,10 @@ from .serializers import (
     CustomerProfileSerializer
 )
 
-class CustomerViewSet(viewsets.ModelViewSet):
-    queryset = Customer.objects.all()
+class CustomerViewSet(viewsets.GenericViewSet):
     serializer_class = CustomerSerializer
     authentication_classes = [TokenAuthentication]
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
     
     def get_serializer_class(self):
         if self.action == 'register':
@@ -27,12 +26,30 @@ class CustomerViewSet(viewsets.ModelViewSet):
         elif self.action in ['profile', 'update_profile']:
             return CustomerProfileSerializer
         return CustomerSerializer
+
+    def list(self, request):
+        return Response({'error': 'Listing customers is disabled.'}, status=status.HTTP_405_METHOD_NOT_ALLOWED)
+
+    def create(self, request):
+        return Response({'error': 'Use /register/ instead.'}, status=status.HTTP_405_METHOD_NOT_ALLOWED)
+
+    def retrieve(self, request, pk=None):
+        return Response({'error': 'Direct customer retrieval is disabled.'}, status=status.HTTP_405_METHOD_NOT_ALLOWED)
+
+    def update(self, request, pk=None):
+        return Response({'error': 'Direct customer update is disabled.'}, status=status.HTTP_405_METHOD_NOT_ALLOWED)
+
+    def partial_update(self, request, pk=None):
+        return Response({'error': 'Direct customer update is disabled.'}, status=status.HTTP_405_METHOD_NOT_ALLOWED)
+
+    def destroy(self, request, pk=None):
+        return Response({'error': 'Direct customer delete is disabled.'}, status=status.HTTP_405_METHOD_NOT_ALLOWED)
     
     @action(detail=False, methods=['post'], permission_classes=[AllowAny])
     def register(self, request):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        self.perform_create(serializer)
+        serializer.save()
         return Response(
             {'message': 'Customer registered successfully'},
             status=status.HTTP_201_CREATED
@@ -79,7 +96,7 @@ class CustomerViewSet(viewsets.ModelViewSet):
             customer = Customer.objects.get(user=request.user)
             serializer = self.get_serializer(customer, data=request.data, partial=True)
             serializer.is_valid(raise_exception=True)
-            self.perform_update(serializer)
+            serializer.save()
             return Response(serializer.data)
         except Customer.DoesNotExist:
             return Response(
