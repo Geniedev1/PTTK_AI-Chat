@@ -11,6 +11,7 @@ services:
       CUSTOMER_SERVICE_URL: http://customer-service:8002
       CART_SERVICE_URL: http://cart-service:8003
       PRODUCT_SERVICE_URL: http://product-service:8004
+      ORDER_SERVICE_URL: http://order-service:8005
       ALLOWED_HOSTS: "*"
       PROXY_TIMEOUT: 30
     ports:
@@ -20,6 +21,7 @@ services:
       - customer-service
       - cart-service
       - product-service
+      - order-service
     networks:
       - microservice-network
     volumes:
@@ -94,6 +96,25 @@ services:
       - product_db_volume:/var/lib/postgresql/data
     ports:
       - "5433:5432"
+    networks:
+      - microservice-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      timeout: 20s
+      retries: 10
+
+  # PostgreSQL for Order Service
+  order-db:
+    image: postgres:15-alpine
+    container_name: order-db
+    environment:
+      POSTGRES_DB: order_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - order_db_volume:/var/lib/postgresql/data
+    ports:
+      - "5434:5432"
     networks:
       - microservice-network
     healthcheck:
@@ -187,6 +208,29 @@ services:
     volumes:
       - ./product-service:/app
 
+  # Order Service
+  order-service:
+    build: ./order-service
+    container_name: order-service
+    environment:
+      INTERNAL_ADMIN_KEY: ${INTERNAL_ADMIN_KEY:-change-this-in-dev}
+      DB_NAME: order_db
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_HOST: order-db
+      DB_PORT: 5432
+      CART_SERVICE_URL: http://cart-service:8003
+      PRODUCT_SERVICE_URL: http://product-service:8004
+    ports:
+      - "8005:8005"
+    depends_on:
+      order-db:
+        condition: service_healthy
+    networks:
+      - microservice-network
+    volumes:
+      - ./order-service:/app
+
 networks:
   microservice-network:
     driver: bridge
@@ -196,3 +240,4 @@ volumes:
   customer_db_volume:
   cart_db_volume:
   product_db_volume:
+  order_db_volume:

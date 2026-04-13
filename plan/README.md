@@ -22,5 +22,6 @@ Thứ tự khuyến nghị:
 ## Ghi chú
 
 - `product-service`, `cart-service`, `customer-service`, `staff-service`, `api-gateway` đã tồn tại trong repo.
-- `order-service`, `interaction-service`, `ai-service` là các thành phần dự kiến thêm mới ở các phase sau.
+- `order-service` da duoc dua vao repo o baseline Plan 04.
+- `interaction-service`, `ai-service` van la cac thanh phan du kien them moi o cac phase sau.
 - Không triển khai Graph, GNN, GraphRAG trong roadmap này. Các phần đó để future work sau khi core và AI baseline ổn định.

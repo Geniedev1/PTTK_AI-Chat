@@ -1,5 +1,13 @@
 # Plan 04: Cart and Order
 
+## Trang thai
+
+In progress.
+
+## Deliverable files
+
+- [artifacts/04-cart-order-summary.md](./artifacts/04-cart-order-summary.md)
+
 ## Mục tiêu
 
 Hoàn thiện flow mua hàng từ cart sang order để tạo được tín hiệu nghiệp vụ chuẩn cho analytics và AI.

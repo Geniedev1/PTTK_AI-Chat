@@ -2,11 +2,16 @@
 
 ## Trạng thái
 
-Completed for review.
+Completed.
 
 ## Deliverable files
 
 - [artifacts/03-catalog-search-summary.md](./artifacts/03-catalog-search-summary.md)
+
+## Completion notes
+
+- Product seed da duoc mo rong len catalog sample quy mo lon hon de phuc vu UI, search va AI baseline.
+- Contract README da duoc cap nhat theo dung gateway route va cart session flow hien tai.
 
 ## Mục tiêu
 

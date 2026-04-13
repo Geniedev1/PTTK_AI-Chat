@@ -5,7 +5,7 @@
 - mở rộng product schema để giàu metadata hơn
 - giữ tương thích ngược với API cũ ở mức hợp lý
 - thêm search/filter/sort phục vụ UI và AI
-- bổ sung seed mẫu có mô tả và metadata tốt hơn
+- bổ sung seed mẫu quy mô lớn hơn với mô tả và metadata tốt hơn
 - thêm test khung cho serializer/search
 
 ## Schema mới trong product-service
@@ -76,6 +76,7 @@ Quy ước mới:
 - `product-service/modules/catalog/presentation/api/views/product_view.py`
 - `product-service/modules/catalog/infrastructure/migrations/0002_expand_product_metadata.py`
 - `product-service/modules/catalog/seeds/products_seed.py`
+- `product-service/modules/catalog/tests/test_product_seed.py`
 
 ## Test đã thêm
 
@@ -83,8 +84,8 @@ Quy ước mới:
 
 ## Lưu ý còn lại
 
-- seed data hiện đã giàu metadata hơn nhưng vẫn mới ở mức sample, chưa đạt quy mô `50-100` sản phẩm thực tế
-- chưa có category/brand seed phong phú tương ứng với toàn bộ sample catalog
+- seed data da duoc nang len baseline catalog sample quy mo lon hon cho UI, search va AI
+- category/brand van chua duoc tach thanh bo seed management day du
 - chưa có full-text search engine; search hiện vẫn là ORM-based search đủ cho MVP
 
 ## Điều kiện để sang Plan 04

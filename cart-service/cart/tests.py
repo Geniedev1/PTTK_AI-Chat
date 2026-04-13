@@ -20,6 +20,8 @@ class CartSessionFlowTest(TestCase):
         mocked_response.status_code = 200
         mocked_response.json.return_value = {
             "id": 1,
+            "name": "Keyboard",
+            "base_price": "99.99",
             "is_active": True,
             "has_stock": True,
             "stock": 10,
@@ -49,7 +51,9 @@ class CartSessionFlowTest(TestCase):
 
         self.assertEqual(first_response.status_code, 201)
         self.assertEqual(second_response.status_code, 200)
-        self.assertEqual(Cart.objects.get(session_key="session-1", product_id=1).quantity, 3)
+        cart_item = Cart.objects.get(session_key="session-1", product_id=1)
+        self.assertEqual(cart_item.quantity, 3)
+        self.assertEqual(str(cart_item.price_snapshot), "99.99")
 
     def test_current_creates_and_returns_session_key(self):
         request = self.factory.get("/api/cart/current")

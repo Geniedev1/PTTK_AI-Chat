@@ -1,4 +1,5 @@
 import uuid
+from decimal import Decimal, InvalidOperation
 
 import requests
 from django.conf import settings
@@ -86,6 +87,12 @@ class CartViewSet(viewsets.GenericViewSet):
 
         return product, None
 
+    def _extract_price_snapshot(self, product):
+        try:
+            return Decimal(str(product["base_price"])).quantize(Decimal("0.01"))
+        except (KeyError, InvalidOperation, TypeError, ValueError):
+            return None
+
     @action(detail=False, methods=['get'])
     def current(self, request):
         session_key = self._get_or_create_session_key(request)
@@ -106,19 +113,21 @@ class CartViewSet(viewsets.GenericViewSet):
         session_key = self._get_or_create_session_key(request)
         product_id = serializer.validated_data['product_id']
         quantity = serializer.validated_data.get('quantity', 1)
-        _, error_response = self._get_product_payload(product_id)
+        product, error_response = self._get_product_payload(product_id)
         if error_response:
             error_response["X-Cart-Session-Key"] = session_key
             return error_response
+        price_snapshot = self._extract_price_snapshot(product)
 
         cart_item, created = Cart.objects.get_or_create(
             session_key=session_key,
             product_id=product_id,
-            defaults={'quantity': quantity}
+            defaults={'quantity': quantity, 'price_snapshot': price_snapshot}
         )
         if not created:
             cart_item.quantity += quantity
-            cart_item.save(update_fields=['quantity', 'updated_at'])
+            cart_item.price_snapshot = price_snapshot
+            cart_item.save(update_fields=['quantity', 'price_snapshot', 'updated_at'])
 
         serializer = CartSerializer(cart_item)
         return self._build_response(

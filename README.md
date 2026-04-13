@@ -1,13 +1,14 @@
 # Microservice E-Commerce Platform
 
-Hệ thống đã được refactor theo DDD để dùng một `product-service` duy nhất cho bounded context `Catalog`.
+Repo này đang triển khai roadmap theo thứ tự `01 -> 02 -> 03 -> 04 -> 05 -> 06 -> 07 -> 08` trong thư mục [`plan`](./plan).
 
-## Kiến trúc hiện tại
+## Services hiện tại
 
 - `staff-service` trên cổng `8001`
 - `customer-service` trên cổng `8002`
 - `cart-service` trên cổng `8003`
 - `product-service` trên cổng `8004`
+- `order-service` trên cổng `8005`
 - `api-gateway` trên cổng `80`
 
 Gateway route:
@@ -16,38 +17,16 @@ Gateway route:
 - `/api/customers/`
 - `/api/cart/`
 - `/api/products/`
+- `/api/orders/`
 
-## Vì sao đổi sang `product-service`
+## Trạng thái roadmap
 
-Theo tài liệu thiết kế DDD:
+- Plan 01: kiến trúc MVP và ownership
+- Plan 02: hardening core service và session cart
+- Plan 03: catalog metadata + search/filter/sort
+- Plan 04: baseline cart-to-order flow với `order-service`
 
-- không tách microservice theo category sản phẩm
-- `Laptop`, `Clothes` chỉ là dữ liệu/category/product type
-- `Catalog` là một domain duy nhất
-- `Cart` chỉ lưu `product_id` và gọi sang `product-service`
-
-## Product Service theo DDD
-
-Cấu trúc chính ở [product-service](/Users/dongocminh/PTTK/KiemTra01/product-service):
-
-- `config/settings/`
-- `modules/catalog/domain/`
-- `modules/catalog/application/`
-- `modules/catalog/infrastructure/`
-- `modules/catalog/presentation/api/`
-- `shared/`
-
-`Product` dùng model chung với:
-
-- `name`
-- `description`
-- `category_id`
-- `brand_id`
-- `product_type_id`
-- `base_price`
-- `stock`
-- `attributes` dạng JSON
-- `variants`
+Các phase `05-08` vẫn là bước tiếp theo cho interaction tracking, AI recommendation, RAG chatbot và personalization.
 
 ## Chạy hệ thống
 
@@ -63,65 +42,77 @@ Kiểm tra gateway:
 curl http://localhost/health
 ```
 
-## API chính
-
-### Product
-
-```text
-POST   /api/products/
-GET    /api/products/
-GET    /api/products/{id}/
-PUT    /api/products/{id}/
-DELETE /api/products/{id}/
-GET    /api/products/in_stock/
-POST   /api/products/{id}/variants/
-GET    /api/products/categories/
-GET    /api/products/categories/{id}/
-```
-
-Ví dụ tạo product:
-
-```bash
-curl -X POST http://localhost/api/products/ \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "MacBook Pro 14",
-    "description": "Powerful laptop for professionals",
-    "base_price": 2000.00,
-    "stock": 10,
-    "attributes": {
-      "ram": "16GB",
-      "cpu": "M3 Pro",
-      "storage": "512GB SSD"
-    }
-  }'
-```
+## Contract chính
 
 ### Cart
 
+Cart hiện dùng `X-Cart-Session-Key` thay cho `customer_id` query param.
+
 ```text
-GET    /api/cart/
-GET    /api/cart/by_customer?customer_id=1
-POST   /api/cart/add_product?customer_id=1
-POST   /api/cart/remove_product?customer_id=1
-POST   /api/cart/update_quantity?customer_id=1
-POST   /api/cart/clear_cart?customer_id=1
+GET  /api/cart/current
+POST /api/cart/add_product
+POST /api/cart/remove_product
+POST /api/cart/update_quantity
+POST /api/cart/clear_cart
 ```
 
-Ví dụ thêm vào giỏ:
+Ví dụ thêm sản phẩm:
 
 ```bash
-curl -X POST "http://localhost/api/cart/add_product?customer_id=1" \
+curl -X POST http://localhost/api/cart/add_product \
   -H "Content-Type: application/json" \
+  -H "X-Cart-Session-Key: demo-session-001" \
   -d '{
     "product_id": 1,
     "quantity": 2
   }'
 ```
 
-## Tài liệu liên quan
+### Product
 
-- [DDD_REDESIGN.md](/Users/dongocminh/PTTK/KiemTra01/DDD_REDESIGN.md)
-- [QUICK_START.md](/Users/dongocminh/PTTK/KiemTra01/QUICK_START.md)
-- [API_DOCUMENTATION.md](/Users/dongocminh/PTTK/KiemTra01/API_DOCUMENTATION.md)
-- [ARCHITECTURE.md](/Users/dongocminh/PTTK/KiemTra01/ARCHITECTURE.md)
+```text
+POST   /api/products/
+GET    /api/products/
+GET    /api/products/search
+GET    /api/products/{id}
+PUT    /api/products/{id}
+DELETE /api/products/{id}
+GET    /api/products/in_stock
+POST   /api/products/{id}/variants
+```
+
+`GET /api/products/` và `GET /api/products/search` hỗ trợ `search`, `category_id`, `brand_id`, `product_type_id`, `in_stock`, `min_price`, `max_price`, `sort_by`, `tag`.
+
+### Order
+
+Order hiện được tạo trực tiếp từ cart session.
+
+```text
+POST /api/orders/
+GET  /api/orders/?customer_id={id}
+GET  /api/orders/{id}?customer_id={id}
+POST /api/orders/{id}/update_status
+```
+
+Ví dụ tạo order từ cart:
+
+```bash
+curl -X POST http://localhost/api/orders/ \
+  -H "Content-Type: application/json" \
+  -H "X-Cart-Session-Key: demo-session-001" \
+  -d '{
+    "customer_id": 1,
+    "clear_cart": true
+  }'
+```
+
+Ví dụ update trạng thái order:
+
+```bash
+curl -X POST http://localhost/api/orders/1/update_status \
+  -H "Content-Type: application/json" \
+  -H "X-Internal-Admin-Key: change-this-in-dev" \
+  -d '{
+    "status": "PAID"
+  }'
+```
