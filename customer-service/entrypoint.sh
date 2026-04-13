@@ -19,5 +19,8 @@ fi
 echo "Running migrations..."
 python manage.py migrate --noinput || true
 
+GUNICORN_WORKERS="${GUNICORN_WORKERS:-1}"
+GUNICORN_TIMEOUT="${GUNICORN_TIMEOUT:-60}"
+
 echo "Starting customer service..."
-exec gunicorn customer_service.wsgi:application --bind 0.0.0.0:8002 --workers 4
+exec gunicorn customer_service.wsgi:application --bind 0.0.0.0:8002 --workers "$GUNICORN_WORKERS" --timeout "$GUNICORN_TIMEOUT"

@@ -3,6 +3,7 @@ from decimal import Decimal, InvalidOperation
 import requests
 from django.conf import settings
 from django.db import transaction
+from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny
@@ -10,6 +11,7 @@ from rest_framework.response import Response
 
 from .models import Order, OrderItem
 from .serializers import OrderCreateSerializer, OrderSerializer, OrderStatusUpdateSerializer
+from .tracking import emit_interaction_event
 
 
 class OrderViewSet(viewsets.GenericViewSet):
@@ -127,6 +129,62 @@ class OrderViewSet(viewsets.GenericViewSet):
         except (InvalidOperation, TypeError, ValueError):
             return None
 
+    def _apply_status_transition(self, order, new_status):
+        if not order.can_transition_to(new_status):
+            return False
+
+        timestamp = timezone.now()
+        order.status = new_status
+        update_fields = ["status", "updated_at"]
+
+        if new_status == Order.Status.CONFIRMED and order.confirmed_at is None:
+            order.confirmed_at = timestamp
+            update_fields.append("confirmed_at")
+        if new_status == Order.Status.PAID and order.paid_at is None:
+            order.paid_at = timestamp
+            update_fields.append("paid_at")
+        if new_status == Order.Status.COMPLETED and order.completed_at is None:
+            order.completed_at = timestamp
+            update_fields.append("completed_at")
+        if new_status == Order.Status.CANCELLED and order.cancelled_at is None:
+            order.cancelled_at = timestamp
+            update_fields.append("cancelled_at")
+
+        order.save(update_fields=update_fields)
+        return True
+
+    def _emit_order_item_event(self, order, event_type):
+        base_metadata = {
+            "order_id": order.id,
+            "status": order.status,
+            "total_amount": str(order.total_amount),
+            "purchase_succeeded": order.purchase_succeeded(),
+        }
+        order_items = list(order.items.all())
+        if not order_items:
+            emit_interaction_event(
+                event_type=event_type,
+                session_id=order.session_key,
+                user_id=order.customer_id,
+                metadata=base_metadata,
+            )
+            return
+
+        for item in order_items:
+            emit_interaction_event(
+                event_type=event_type,
+                session_id=order.session_key,
+                user_id=order.customer_id,
+                product_id=item.product_id,
+                metadata={
+                    **base_metadata,
+                    "order_item_id": item.id,
+                    "product_name_snapshot": item.product_name_snapshot,
+                    "price_snapshot": str(item.price_snapshot),
+                    "quantity": item.quantity,
+                },
+            )
+
     def list(self, request):
         queryset = self._get_scoped_queryset(request)
         if queryset is None:
@@ -167,6 +225,17 @@ class OrderViewSet(viewsets.GenericViewSet):
         cart_items = cart_payload.get("items", [])
         if not cart_items:
             return Response({"detail": "Cart is empty."}, status=status.HTTP_400_BAD_REQUEST)
+
+        emit_interaction_event(
+            event_type="checkout_started",
+            session_id=session_key,
+            user_id=serializer.validated_data.get("customer_id"),
+            metadata={
+                "item_count": len(cart_items),
+                "total_quantity": cart_payload.get("total_quantity"),
+                "subtotal_amount": cart_payload.get("subtotal_amount"),
+            },
+        )
 
         order_items = []
         total_amount = Decimal("0.00")
@@ -210,6 +279,18 @@ class OrderViewSet(viewsets.GenericViewSet):
         if serializer.validated_data.get("clear_cart", True):
             cart_cleared = self._clear_cart(session_key)
 
+        emit_interaction_event(
+            event_type="order_created",
+            session_id=session_key,
+            user_id=order.customer_id,
+            metadata={
+                "order_id": order.id,
+                "status": order.status,
+                "total_amount": str(order.total_amount),
+                "item_count": len(order_items),
+            },
+        )
+
         return Response(
             {
                 "order": OrderSerializer(Order.objects.prefetch_related("items").get(pk=order.pk)).data,
@@ -230,6 +311,16 @@ class OrderViewSet(viewsets.GenericViewSet):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        order.status = serializer.validated_data["status"]
-        order.save(update_fields=["status", "updated_at"])
+        new_status = serializer.validated_data["status"]
+        if not self._apply_status_transition(order, new_status):
+            return Response(
+                {"detail": f"Invalid status transition from {order.status} to {new_status}."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        purchase_event = order.purchase_event()
+        if purchase_event:
+            self._emit_order_item_event(order, purchase_event)
+        elif new_status == Order.Status.CANCELLED:
+            self._emit_order_item_event(order, "order_cancelled")
         return Response(OrderSerializer(order).data)

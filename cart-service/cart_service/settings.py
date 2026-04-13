@@ -116,3 +116,4 @@ LOGGING = {
 
 # Service URLs
 PRODUCT_SERVICE_URL = os.getenv('PRODUCT_SERVICE_URL', 'http://product-service:8004')
+INTERACTION_SERVICE_URL = os.getenv('INTERACTION_SERVICE_URL', '')

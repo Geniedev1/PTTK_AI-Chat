@@ -13,6 +13,10 @@ class StaffViewSet(viewsets.GenericViewSet):
     serializer_class = StaffSerializer
     authentication_classes = [TokenAuthentication]
     permission_classes = [IsAuthenticated]
+
+    disabled_actions = {"list", "create", "retrieve", "update", "partial_update", "destroy"}
+    public_actions = {"login"}
+    internal_key_actions = {"register"}
     
     def get_serializer_class(self):
         if self.action == 'register':
@@ -20,6 +24,24 @@ class StaffViewSet(viewsets.GenericViewSet):
         elif self.action == 'login':
             return StaffLoginSerializer
         return StaffSerializer
+
+    def get_authenticators(self):
+        action = getattr(self, "action", None)
+        if action in self.disabled_actions | self.public_actions | self.internal_key_actions:
+            return []
+        return [authentication() for authentication in self.authentication_classes]
+
+    def get_permissions(self):
+        action = getattr(self, "action", None)
+        if action in self.disabled_actions:
+            return [AllowAny()]
+        if action in self.public_actions:
+            return [AllowAny()]
+        if action in self.internal_key_actions:
+            return [InternalAdminPermission()]
+        if action == "me":
+            return [IsAuthenticated()]
+        return [permission() for permission in self.permission_classes]
 
     def list(self, request):
         return Response({'error': 'Listing staff is disabled.'}, status=status.HTTP_405_METHOD_NOT_ALLOWED)

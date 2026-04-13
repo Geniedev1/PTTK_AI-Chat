@@ -13,6 +13,10 @@ class Order(models.Model):
     session_key = models.CharField(max_length=40, db_index=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
     total_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    confirmed_at = models.DateTimeField(null=True, blank=True)
+    paid_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    cancelled_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -21,6 +25,26 @@ class Order(models.Model):
 
     def __str__(self):
         return f"Order #{self.pk} ({self.status})"
+
+    def can_transition_to(self, new_status):
+        allowed_transitions = {
+            self.Status.PENDING: {self.Status.CONFIRMED, self.Status.PAID, self.Status.CANCELLED},
+            self.Status.CONFIRMED: {self.Status.PAID, self.Status.CANCELLED},
+            self.Status.PAID: {self.Status.COMPLETED},
+            self.Status.CANCELLED: set(),
+            self.Status.COMPLETED: set(),
+        }
+        return new_status == self.status or new_status in allowed_transitions[self.status]
+
+    def purchase_succeeded(self):
+        return self.status in {self.Status.PAID, self.Status.COMPLETED}
+
+    def purchase_event(self):
+        if self.status == self.Status.COMPLETED:
+            return "order_completed"
+        if self.status == self.Status.PAID:
+            return "order_paid"
+        return None
 
 
 class OrderItem(models.Model):

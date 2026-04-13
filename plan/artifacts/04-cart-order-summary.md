@@ -8,6 +8,8 @@
 - them API list order, get order va update status
 - noi `order-service` vao `api-gateway` va `docker-compose`
 - bo sung `price_snapshot` o `cart-service` de checkout co snapshot gia
+- them lifecycle timestamp de phan biet tao don, xac nhan, thanh toan va hoan tat
+- them rule transition hop le cho order status
 
 ## Order contract baseline
 
@@ -24,6 +26,7 @@ Ket qua:
 - tao `Order` status mac dinh `PENDING`
 - tao `OrderItem` tu snapshot cart + product detail
 - clear cart neu request cho phep va upstream cart clear thanh cong
+- response order tra ve `purchase_succeeded` va `purchase_event`
 
 ### Read order
 
@@ -42,7 +45,14 @@ Ket qua:
   - `CANCELLED`
   - `COMPLETED`
 
-## Remaining gaps before calling Plan 04 complete
+Rule transition:
+
+- `PENDING -> CONFIRMED | PAID | CANCELLED`
+- `CONFIRMED -> PAID | CANCELLED`
+- `PAID -> COMPLETED`
+- `CANCELLED` va `COMPLETED` la terminal states
+
+## Remaining gaps after Plan 04
 
 - chua co payment integration that su
 - chua co event `order_paid` / `order_completed` day sang interaction tracking

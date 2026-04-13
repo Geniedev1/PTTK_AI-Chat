@@ -10,6 +10,7 @@ from rest_framework.permissions import AllowAny
 
 from .models import Cart
 from .serializers import CartSerializer, CartAddSerializer, CartUpdateSerializer
+from .tracking import emit_interaction_event
 
 class CartViewSet(viewsets.GenericViewSet):
     serializer_class = CartSerializer
@@ -93,17 +94,37 @@ class CartViewSet(viewsets.GenericViewSet):
         except (KeyError, InvalidOperation, TypeError, ValueError):
             return None
 
+    def _cart_summary(self, session_key):
+        queryset = self._get_cart_queryset(session_key)
+        items = self.get_serializer(queryset, many=True).data
+        subtotal_amount = Decimal("0.00")
+        total_quantity = 0
+        for item in items:
+            total_quantity += int(item.get("quantity", 0))
+            price_snapshot = item.get("price_snapshot")
+            try:
+                if price_snapshot is not None:
+                    subtotal_amount += Decimal(str(price_snapshot)) * int(item.get("quantity", 0))
+            except (InvalidOperation, TypeError, ValueError):
+                continue
+
+        return {
+            'session_key': session_key,
+            'items': items,
+            'item_count': len(items),
+            'total_quantity': total_quantity,
+            'subtotal_amount': str(subtotal_amount.quantize(Decimal("0.01"))),
+        }
+
     @action(detail=False, methods=['get'])
     def current(self, request):
         session_key = self._get_or_create_session_key(request)
-        carts = self.get_serializer(self._get_cart_queryset(session_key), many=True).data
-        return self._build_response(
-            session_key,
-            {
-                'session_key': session_key,
-                'items': carts,
-            },
+        emit_interaction_event(
+            event_type="cart_viewed",
+            session_id=session_key,
+            metadata=self._cart_summary(session_key),
         )
+        return self._build_response(session_key, self._cart_summary(session_key))
     
     @action(detail=False, methods=['post'])
     def add_product(self, request):
@@ -130,6 +151,12 @@ class CartViewSet(viewsets.GenericViewSet):
             cart_item.save(update_fields=['quantity', 'price_snapshot', 'updated_at'])
 
         serializer = CartSerializer(cart_item)
+        emit_interaction_event(
+            event_type="cart_item_added",
+            session_id=session_key,
+            product_id=product_id,
+            metadata={"quantity": quantity, "price_snapshot": str(price_snapshot) if price_snapshot is not None else None},
+        )
         return self._build_response(
             session_key,
             serializer.data,
@@ -155,6 +182,12 @@ class CartViewSet(viewsets.GenericViewSet):
                 product_id=product_id
             )
             cart_item.delete()
+            emit_interaction_event(
+                event_type="cart_item_removed",
+                session_id=session_key,
+                product_id=int(product_id),
+                metadata={"removed": True},
+            )
             return self._build_response(session_key, {'message': 'Product removed from cart'}, status.HTTP_200_OK)
         except Cart.DoesNotExist:
             return self._build_response(
@@ -176,10 +209,21 @@ class CartViewSet(viewsets.GenericViewSet):
                 session_key=session_key,
                 product_id=product_id
             )
+            product, error_response = self._get_product_payload(product_id)
+            if error_response:
+                error_response["X-Cart-Session-Key"] = session_key
+                return error_response
             cart_item.quantity = serializer.validated_data['quantity']
-            cart_item.save(update_fields=['quantity', 'updated_at'])
+            cart_item.price_snapshot = self._extract_price_snapshot(product)
+            cart_item.save(update_fields=['quantity', 'price_snapshot', 'updated_at'])
             
             serializer = CartSerializer(cart_item)
+            emit_interaction_event(
+                event_type="cart_item_quantity_updated",
+                session_id=session_key,
+                product_id=product_id,
+                metadata={"quantity": cart_item.quantity, "price_snapshot": str(cart_item.price_snapshot) if cart_item.price_snapshot is not None else None},
+            )
             return self._build_response(session_key, serializer.data)
         except Cart.DoesNotExist:
             return self._build_response(

@@ -28,6 +28,9 @@ if not User.objects.filter(username='admin').exists():
     print("Superuser created")
 END
 
+GUNICORN_WORKERS="${GUNICORN_WORKERS:-1}"
+GUNICORN_TIMEOUT="${GUNICORN_TIMEOUT:-60}"
+
 # Start server
 echo "Starting staff service..."
-exec gunicorn staff_service.wsgi:application --bind 0.0.0.0:8001 --workers 4
+exec gunicorn staff_service.wsgi:application --bind 0.0.0.0:8001 --workers "$GUNICORN_WORKERS" --timeout "$GUNICORN_TIMEOUT"

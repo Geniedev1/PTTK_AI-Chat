@@ -1,12 +1,13 @@
 from unittest.mock import Mock, patch
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from rest_framework.test import APIRequestFactory
 
-from .models import Order
+from .models import Order, OrderItem
 from .views import OrderViewSet
 
 
+@override_settings(INTERACTION_SERVICE_URL="")
 class OrderCreateFlowTest(TestCase):
     def setUp(self):
         self.factory = APIRequestFactory()
@@ -84,3 +85,78 @@ class OrderCreateFlowTest(TestCase):
         response = self.update_status_view(request, pk=order.id)
 
         self.assertEqual(response.status_code, 403)
+
+    @patch("orders.views.emit_interaction_event")
+    def test_update_status_tracks_purchase_milestones(self, mock_emit):
+        order = Order.objects.create(session_key="session-1", total_amount="10.00")
+        OrderItem.objects.create(
+            order=order,
+            product_id=99,
+            product_name_snapshot="Tracked Keyboard",
+            price_snapshot="10.00",
+            quantity=1,
+        )
+
+        confirm_request = self.factory.post(
+            f"/api/orders/{order.id}/update_status",
+            {"status": Order.Status.CONFIRMED},
+            format="json",
+            HTTP_X_INTERNAL_ADMIN_KEY="change-this-in-dev",
+        )
+        paid_request = self.factory.post(
+            f"/api/orders/{order.id}/update_status",
+            {"status": Order.Status.PAID},
+            format="json",
+            HTTP_X_INTERNAL_ADMIN_KEY="change-this-in-dev",
+        )
+        complete_request = self.factory.post(
+            f"/api/orders/{order.id}/update_status",
+            {"status": Order.Status.COMPLETED},
+            format="json",
+            HTTP_X_INTERNAL_ADMIN_KEY="change-this-in-dev",
+        )
+
+        with self.settings(INTERNAL_ADMIN_KEY="change-this-in-dev"):
+            confirm_response = self.update_status_view(confirm_request, pk=order.id)
+            paid_response = self.update_status_view(paid_request, pk=order.id)
+            complete_response = self.update_status_view(complete_request, pk=order.id)
+
+        self.assertEqual(confirm_response.status_code, 200)
+        self.assertEqual(paid_response.status_code, 200)
+        self.assertEqual(complete_response.status_code, 200)
+
+        order.refresh_from_db()
+        self.assertIsNotNone(order.confirmed_at)
+        self.assertIsNotNone(order.paid_at)
+        self.assertIsNotNone(order.completed_at)
+        self.assertTrue(complete_response.data["purchase_succeeded"])
+        self.assertEqual(complete_response.data["purchase_event"], "order_completed")
+        paid_event_seen = any(
+            call.kwargs.get("event_type") == "order_paid" and call.kwargs.get("product_id") == 99
+            for call in mock_emit.call_args_list
+        )
+        completed_event_seen = any(
+            call.kwargs.get("event_type") == "order_completed" and call.kwargs.get("product_id") == 99
+            for call in mock_emit.call_args_list
+        )
+        self.assertTrue(paid_event_seen)
+        self.assertTrue(completed_event_seen)
+
+    def test_rejects_invalid_status_transition(self):
+        order = Order.objects.create(
+            session_key="session-1",
+            total_amount="10.00",
+            status=Order.Status.CANCELLED,
+        )
+
+        request = self.factory.post(
+            f"/api/orders/{order.id}/update_status",
+            {"status": Order.Status.PAID},
+            format="json",
+            HTTP_X_INTERNAL_ADMIN_KEY="change-this-in-dev",
+        )
+
+        with self.settings(INTERNAL_ADMIN_KEY="change-this-in-dev"):
+            response = self.update_status_view(request, pk=order.id)
+
+        self.assertEqual(response.status_code, 400)

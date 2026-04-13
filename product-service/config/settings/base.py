@@ -6,6 +6,7 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "product-service-secret-key")
 INTERNAL_ADMIN_KEY = os.getenv("INTERNAL_ADMIN_KEY", "")
+INTERACTION_SERVICE_URL = os.getenv("INTERACTION_SERVICE_URL", "")
 DEBUG = os.getenv("DEBUG", "False").lower() == "true"
 ALLOWED_HOSTS = [host.strip() for host in os.getenv("ALLOWED_HOSTS", "*").split(",") if host.strip()]
 

@@ -14,6 +14,7 @@ from ....application.services.product_service import ProductApplicationService
 from ....infrastructure.repositories.product_repository_impl import DjangoProductRepository
 from ..permissions import CatalogWritePermission, has_catalog_admin_access
 from ..serializers.product_serializer import ProductReadSerializer, ProductWriteSerializer, VariantSerializer
+from ..tracking import emit_request_event
 
 
 class ProductViewSet(viewsets.ViewSet):
@@ -98,6 +99,17 @@ class ProductViewSet(viewsets.ViewSet):
                 request.query_params.get("include_inactive") == "true" and has_catalog_admin_access(request)
             )
             products = self.service.list_products(ListProductsQuery(include_inactive=include_inactive))
+        if request.query_params.get("search"):
+            emit_request_event(
+                request,
+                event_type="search_performed",
+                query_text=request.query_params.get("search"),
+                metadata={
+                    "result_count": len(products),
+                    "product_ids": [product.id for product in products[:10]],
+                    "filters": {key: request.query_params.get(key) for key in request.query_params},
+                },
+            )
         serializer = ProductReadSerializer([self._serialize_product(product) for product in products], many=True)
         return Response(serializer.data)
 
@@ -105,6 +117,17 @@ class ProductViewSet(viewsets.ViewSet):
         product = self.service.get_product(GetProductQuery(product_id=int(pk)))
         if not product or (not product.is_active and not has_catalog_admin_access(request)):
             return Response({"detail": "Product not found."}, status=status.HTTP_404_NOT_FOUND)
+        emit_request_event(
+            request,
+            event_type="product_viewed",
+            product_id=product.id,
+            metadata={
+                "category_id": product.category_id,
+                "brand_id": product.brand_id,
+                "product_type_id": product.product_type_id,
+                "referrer": request.query_params.get("referrer"),
+            },
+        )
         serializer = ProductReadSerializer(self._serialize_product(product))
         return Response(serializer.data)
 
@@ -116,6 +139,16 @@ class ProductViewSet(viewsets.ViewSet):
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
         products = self.service.filter_products(query)
+        emit_request_event(
+            request,
+            event_type="search_performed",
+            query_text=request.query_params.get("search"),
+            metadata={
+                "result_count": len(products),
+                "product_ids": [product.id for product in products[:10]],
+                "filters": {key: request.query_params.get(key) for key in request.query_params},
+            },
+        )
         serializer = ProductReadSerializer([self._serialize_product(product) for product in products], many=True)
         return Response(serializer.data)
 

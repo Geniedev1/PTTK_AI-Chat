@@ -1,12 +1,13 @@
 from unittest.mock import Mock, patch
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from rest_framework.test import APIRequestFactory
 
 from .models import Cart
 from .views import CartViewSet
 
 
+@override_settings(INTERACTION_SERVICE_URL="")
 class CartSessionFlowTest(TestCase):
     def setUp(self):
         self.factory = APIRequestFactory()
@@ -62,9 +63,13 @@ class CartSessionFlowTest(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("X-Cart-Session-Key", response)
         self.assertIn("session_key", response.data)
+        self.assertIn("subtotal_amount", response.data)
+        self.assertIn("total_quantity", response.data)
 
-    def test_update_and_remove_use_same_session_scope(self):
-        cart = Cart.objects.create(session_key="session-2", product_id=10, quantity=1)
+    @patch("cart.views.requests.get")
+    def test_update_and_remove_use_same_session_scope(self, mock_get):
+        mock_get.return_value = self._product_response()
+        cart = Cart.objects.create(session_key="session-2", product_id=10, quantity=1, price_snapshot="50.00")
 
         update_request = self.factory.post(
             "/api/cart/update_quantity",
@@ -73,6 +78,7 @@ class CartSessionFlowTest(TestCase):
             HTTP_X_CART_SESSION_KEY="session-2",
         )
         update_response = self.update_view(update_request)
+        updated_cart = Cart.objects.get(session_key="session-2", product_id=10)
 
         remove_request = self.factory.post(
             "/api/cart/remove_product",
@@ -84,4 +90,6 @@ class CartSessionFlowTest(TestCase):
 
         self.assertEqual(update_response.status_code, 200)
         self.assertEqual(remove_response.status_code, 200)
+        self.assertEqual(updated_cart.quantity, 5)
+        self.assertEqual(str(updated_cart.price_snapshot), "99.99")
         self.assertFalse(Cart.objects.filter(session_key="session-2", product_id=10).exists())

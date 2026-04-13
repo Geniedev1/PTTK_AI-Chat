@@ -12,4 +12,4 @@ COPY . .
 
 EXPOSE 80
 
-CMD ["gunicorn", "--bind", "0.0.0.0:80", "--workers", "2", "gateway_service.wsgi:application"]
+CMD ["sh", "-c", "gunicorn --bind 0.0.0.0:80 --workers ${GUNICORN_WORKERS:-1} --timeout ${GUNICORN_TIMEOUT:-60} gateway_service.wsgi:application"]

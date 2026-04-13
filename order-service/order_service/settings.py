@@ -116,4 +116,5 @@ LOGGING = {
 
 CART_SERVICE_URL = os.getenv("CART_SERVICE_URL", "http://cart-service:8003")
 PRODUCT_SERVICE_URL = os.getenv("PRODUCT_SERVICE_URL", "http://product-service:8004")
+INTERACTION_SERVICE_URL = os.getenv("INTERACTION_SERVICE_URL", "")
 INTERNAL_ADMIN_KEY = os.getenv("INTERNAL_ADMIN_KEY", "")

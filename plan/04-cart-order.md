@@ -2,7 +2,7 @@
 
 ## Trang thai
 
-In progress.
+Completed.
 
 ## Deliverable files
 

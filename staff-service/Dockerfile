@@ -21,7 +21,7 @@ RUN mkdir -p /app/staticfiles
 
 # Make entrypoint script executable
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
 
 # Expose port
 EXPOSE 8001

@@ -19,6 +19,8 @@ class OrderItemSerializer(serializers.ModelSerializer):
 
 class OrderSerializer(serializers.ModelSerializer):
     items = OrderItemSerializer(many=True, read_only=True)
+    purchase_succeeded = serializers.SerializerMethodField()
+    purchase_event = serializers.SerializerMethodField()
 
     class Meta:
         model = Order
@@ -28,11 +30,23 @@ class OrderSerializer(serializers.ModelSerializer):
             "session_key",
             "status",
             "total_amount",
+            "purchase_succeeded",
+            "purchase_event",
+            "confirmed_at",
+            "paid_at",
+            "completed_at",
+            "cancelled_at",
             "items",
             "created_at",
             "updated_at",
         ]
         read_only_fields = fields
+
+    def get_purchase_succeeded(self, obj):
+        return obj.purchase_succeeded()
+
+    def get_purchase_event(self, obj):
+        return obj.purchase_event()
 
 
 class OrderCreateSerializer(serializers.Serializer):
