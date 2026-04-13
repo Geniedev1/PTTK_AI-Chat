@@ -1,8 +1,8 @@
 # Implementation Plan
 
-Thư mục này chứa roadmap triển khai theo thứ tự ưu tiên thực tế cho repo hiện tại.
+Thu muc nay chua roadmap trien khai theo thu tu uu tien thuc te cho repo hien tai.
 
-## Danh sách plan
+## Danh sach plan
 
 1. [01-mvp-architecture.md](./01-mvp-architecture.md)
 2. [02-core-hardening.md](./02-core-hardening.md)
@@ -15,22 +15,20 @@ Thư mục này chứa roadmap triển khai theo thứ tự ưu tiên thực t�
 9. [09-RAG-ChatBot.md](./09-RAG-ChatBot.md)
 10. [10-personalization-metrics-deploy.md.md](./10-personalization-metrics-deploy.md.md)
 
-## Thứ tự triển khai
+## Thu tu trien khai
 
-Thứ tự khuyến nghị:
+Thu tu khuyen nghi cho baseline demo-first:
 
 `01 -> 02 -> 03 -> 04 -> 05 -> 06 -> 07 -> 09 -> 10`
 
-`08` la future work sau demo, khong nam trong scope 5 ngay.
+`08` la advanced AI/ML phase. No khong nam trong scope 5 ngay ban dau, nhung da duoc dinh nghia lai thanh full-scope behavior modeling de mo rong sau khi baseline demo-first on dinh.
 
-Roadmap 07-10 da duoc rut gon theo huong demo-first va tich hop AI ngoai thay vi tu train model.
+## Ghi chu
 
-## Ghi chú
-
-- `product-service`, `cart-service`, `customer-service`, `staff-service`, `api-gateway` đã tồn tại trong repo.
+- `product-service`, `cart-service`, `customer-service`, `staff-service`, va `api-gateway` da ton tai trong repo.
 - `order-service` da duoc dua vao repo o baseline Plan 04.
 - `interaction-service` da duoc dua vao repo o baseline Plan 05.
 - `knowledge graph` baseline (Neo4j + graph query layer) da duoc dua vao repo o Plan 06.
-- `ai-service` van la thanh phan du kien them moi o cac phase sau.
-- Clarification: the repo now includes the Plan 06 knowledge graph baseline; only GNN and GraphRAG remain future work.
-- Không triển khai Graph, GNN, GraphRAG trong roadmap này. Các phần đó để future work sau khi core và AI baseline ổn định.
+- `ai-service` da duoc dua vao repo va duoc mo rong dan qua recommendation, chatbot, va personalization.
+- Graph baseline da nam trong roadmap va da co o Plan 06.
+- GNN, GraphRAG, SPD, va behavior modeling learned phase thuoc Plan 08 va nen duoc trien khai theo tung pha sau khi baseline da on dinh.
