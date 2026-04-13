@@ -8,7 +8,7 @@ from pathlib import Path
 import requests
 from django.conf import settings
 
-from .profile_utils import build_profile_snapshot
+from .profile_utils import BehavioralProfileBuilder
 from .services import ProductCatalogClient, ServiceClientError
 
 
@@ -256,12 +256,17 @@ class ChatbotService:
         cart_client=None,
         interaction_client=None,
         openai_client=None,
+        profile_builder=None,
     ):
         self.product_client = product_client or ProductCatalogClient()
         self.order_client = order_client or OrderClient()
         self.cart_client = cart_client or CartStatusClient()
         self.interaction_client = interaction_client or InteractionContextClient()
         self.openai_client = openai_client or OpenAIClient()
+        self.profile_builder = profile_builder or BehavioralProfileBuilder(
+            interaction_client=self.interaction_client,
+            cart_client=self.cart_client,
+        )
 
     def chat(self, *, message, user_id=None, session_id=None, customer_id=None, product_id=None, order_id=None):
         normalized_message = message.strip()
@@ -565,9 +570,7 @@ class ChatbotService:
         return context[:4]
 
     def _build_profile_snapshot(self, products, *, user_id=None, session_id=None):
-        events = self.interaction_client.fetch_events(user_id=user_id, session_id=session_id, limit=20)
-        interest_rows = self.interaction_client.fetch_user_interest(user_id=user_id, session_id=session_id, limit=3)
-        return build_profile_snapshot(products, events, interest_rows)
+        return self.profile_builder.build(products, user_id=user_id, session_id=session_id)
 
     def _generate_grounded_answer(self, message, retrieval):
         prompt = self._build_prompt(message, retrieval)
@@ -585,6 +588,7 @@ class ChatbotService:
         graph_lines = []
         for row in retrieval["graph_context"]:
             graph_lines.append(f"- {row['type']}: {row['label']} (score={row['score']})")
+        profile_lines = self._behavioral_profile_lines(retrieval.get("profile_snapshot") or {})
 
         return (
             "You are an e-commerce assistant. Use only the provided context. "
@@ -595,6 +599,8 @@ class ChatbotService:
             + ("\n".join(source_lines) if source_lines else "No retrieved context.")
             + "\n\nGraph context:\n"
             + ("\n".join(graph_lines) if graph_lines else "No graph context.")
+            + "\n\nBehavioral profile:\n"
+            + ("\n".join(profile_lines) if profile_lines else "No behavioral profile.")
         )
 
     def _fallback_answer(self, retrieval):
@@ -658,18 +664,80 @@ class ChatbotService:
             for row in profile_snapshot.get("top_brands", [])
             if row.get("brand_id") is not None
         }
+        top_price_bands = {
+            row.get("price_band")
+            for row in profile_snapshot.get("top_price_bands", [])
+            if row.get("price_band")
+        }
         recent_product_ids = set(profile_snapshot.get("recent_viewed_product_ids", []))
+        recent_product_ids.update(profile_snapshot.get("recent_clicked_product_ids", []))
+        recent_product_ids.update(profile_snapshot.get("recent_carted_product_ids", []))
+        recent_product_ids.update(profile_snapshot.get("recent_purchased_product_ids", []))
+        strong_product_ids = {
+            row.get("product_id")
+            for row in profile_snapshot.get("strong_product_interests", [])
+            if row.get("product_id") is not None
+        }
         recent_query_tokens = self._tokens(" ".join(profile_snapshot.get("recent_queries", [])))
+        recent_chat_tokens = self._tokens(" ".join(profile_snapshot.get("recent_chat_cues", [])))
 
         if chunk.product_id in recent_product_ids:
             bias += 2.0
+        if chunk.product_id in strong_product_ids:
+            bias += 1.4
         if chunk.category_id in top_category_ids:
             bias += 1.2
         if chunk.brand_id in top_brand_ids:
             bias += 0.8
+        if top_price_bands and chunk.product_id is not None:
+            product_price_band = self._extract_price_band(chunk.text)
+            if product_price_band in top_price_bands:
+                bias += 0.5
         if recent_query_tokens and recent_query_tokens & self._tokens(chunk.text):
             bias += 0.4
+        if recent_chat_tokens and recent_chat_tokens & self._tokens(chunk.text):
+            bias += 0.2
         return bias
+
+    def _behavioral_profile_lines(self, profile_snapshot):
+        if not profile_snapshot:
+            return []
+
+        top_category_ids = [str(row.get("category_id")) for row in profile_snapshot.get("top_categories", [])[:3]]
+        top_brand_ids = [str(row.get("brand_id")) for row in profile_snapshot.get("top_brands", [])[:3]]
+        recent_products = [str(product_id) for product_id in profile_snapshot.get("recent_product_ids", [])[:5]]
+        recent_queries = profile_snapshot.get("recent_queries", [])[:3]
+
+        lines = [
+            f"- scope_type: {profile_snapshot.get('scope_type')}",
+            f"- funnel_stage: {profile_snapshot.get('funnel_stage')}",
+            f"- purchase_intent_score: {profile_snapshot.get('purchase_intent_score')}",
+        ]
+        if top_category_ids:
+            lines.append(f"- top_categories: {', '.join(top_category_ids)}")
+        if top_brand_ids:
+            lines.append(f"- top_brands: {', '.join(top_brand_ids)}")
+        if recent_products:
+            lines.append(f"- recent_products: {', '.join(recent_products)}")
+        if recent_queries:
+            lines.append(f"- recent_queries: {' | '.join(recent_queries)}")
+        return lines
+
+    def _extract_price_band(self, text):
+        lowered = text.lower()
+        if "price=" not in lowered:
+            return None
+        match = re.search(r"price=([0-9]+(?:\.[0-9]+)?)", lowered)
+        if not match:
+            return None
+        amount = float(match.group(1))
+        if amount < 50:
+            return "budget"
+        if amount < 150:
+            return "mid"
+        if amount < 500:
+            return "premium"
+        return "luxury"
 
     def _product_text(self, product):
         fields = [

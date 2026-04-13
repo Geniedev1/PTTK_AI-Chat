@@ -10,7 +10,7 @@ from ai_service.middleware import RequestContextMiddleware
 from .chat_services import ChatbotService
 from .chat_views import ChatViewSet
 from .services import RecommendationService
-from .views import RecommendationViewSet
+from .views import ModelStatusViewSet, ProfileViewSet, RecommendationViewSet
 
 
 KNOWLEDGE_BASE_DIR = str(Path(__file__).resolve().parents[1] / "knowledge_base")
@@ -90,6 +90,8 @@ class StubInteractionClient:
     def fetch_events(self, *, user_id=None, session_id=None, limit=25):
         if user_id == 77 or session_id == "sess-1":
             return [
+                {"event_type": "product_clicked", "product_id": 1, "signal_weight": 2, "query_text": ""},
+                {"event_type": "cart_item_added", "product_id": 1, "signal_weight": 4, "query_text": ""},
                 {"event_type": "product_viewed", "product_id": 1, "signal_weight": 4, "query_text": "quiet keyboard"},
                 {"event_type": "product_viewed", "product_id": 4, "signal_weight": 2, "query_text": ""},
             ]
@@ -118,8 +120,13 @@ class StubInteractionClient:
 class StubCartClient:
     def fetch_current_cart(self, session_id):
         if session_id == "sess-1":
-            return {"items": [{"product_id": 1}, {"product_id": 4}]}
-        return {"items": []}
+            return {
+                "items": [{"product_id": 1}, {"product_id": 4}],
+                "item_count": 2,
+                "total_quantity": 3,
+                "subtotal_amount": "124.00",
+            }
+        return {"items": [], "item_count": 0, "total_quantity": 0, "subtotal_amount": "0.00"}
 
 
 class StubOrderClient:
@@ -155,8 +162,10 @@ class StubInteractionContextClient:
     def fetch_events(self, *, user_id=None, session_id=None, limit=20):
         if user_id == 77 or session_id == "sess-1":
             return [
+                {"event_type": "cart_item_added", "product_id": 2, "signal_weight": 4, "query_text": ""},
                 {"event_type": "product_viewed", "product_id": 2, "signal_weight": 4, "query_text": "silent keyboard"},
                 {"event_type": "search_performed", "product_id": None, "signal_weight": 1, "query_text": "keyboard policy"},
+                {"event_type": "chat_message_sent", "product_id": None, "signal_weight": 2, "query_text": "i need a quiet keyboard"},
             ]
         return []
 
@@ -194,6 +203,10 @@ class RecommendationServiceTest(TestCase):
         snapshot = payload["profile_snapshot"]
         self.assertEqual(snapshot["recent_viewed_product_ids"], [1, 4])
         self.assertEqual(snapshot["recent_queries"], ["quiet keyboard"])
+        self.assertEqual(snapshot["recent_clicked_product_ids"], [1])
+        self.assertEqual(snapshot["recent_carted_product_ids"], [1])
+        self.assertEqual(snapshot["funnel_stage"], "interested")
+        self.assertGreater(snapshot["purchase_intent_score"], 0)
 
     def test_product_detail_excludes_current_product_and_keeps_related_items(self):
         payload = self.service.recommend_product_detail(product_id=1, user_id=77, limit=3)
@@ -222,6 +235,8 @@ class RecommendationViewTest(TestCase):
         self.product_detail_view = RecommendationViewSet.as_view({"get": "product_detail"})
         self.cart_view = RecommendationViewSet.as_view({"get": "cart"})
         self.profile_view = RecommendationViewSet.as_view({"get": "profile_snapshot"})
+        self.profile_snapshot_view = ProfileViewSet.as_view({"get": "snapshot"})
+        self.model_status_view = ModelStatusViewSet.as_view({"get": "status"})
 
     def _service(self):
         return RecommendationService(
@@ -282,6 +297,36 @@ class RecommendationViewTest(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["profile_snapshot"]["top_categories"][0]["category_id"], 10)
+        self.assertIn("funnel_stage", response.data["profile_snapshot"])
+
+    def test_standalone_profile_snapshot_endpoint_returns_behavioral_profile(self):
+        service = self._service()
+
+        class StubbedProfileViewSet(ProfileViewSet):
+            service_class = lambda self: service  # type: ignore[assignment]
+
+        request = self.factory.get("/api/ai/profile/snapshot", {"session_id": "sess-1"})
+        view = StubbedProfileViewSet.as_view({"get": "snapshot"})
+        response = view(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["profile_snapshot"]["scope_type"], "session")
+        self.assertGreater(response.data["profile_snapshot"]["purchase_intent_score"], 0)
+
+    def test_model_status_endpoint_reports_behavioral_profile_runtime(self):
+        service = self._service()
+
+        class StubbedModelStatusViewSet(ModelStatusViewSet):
+            service_class = lambda self: service  # type: ignore[assignment]
+
+        request = self.factory.get("/api/ai/models/status")
+        view = StubbedModelStatusViewSet.as_view({"get": "status"})
+        response = view(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data["behavioral_profile_enabled"])
+        self.assertTrue(response.data["integrations"]["chat"]["prompt_context"])
+        self.assertIn("purchase_intent_score", response.data["profile_fields"])
 
 
 @override_settings(KNOWLEDGE_BASE_DIR=KNOWLEDGE_BASE_DIR)
@@ -328,6 +373,9 @@ class ChatbotServiceTest(TestCase):
         self.assertTrue(payload["used_graph_context"])
         self.assertEqual(payload["graph_context"][0]["type"], "user_interest")
         self.assertEqual(payload["profile_snapshot"]["recent_viewed_product_ids"], [2])
+        self.assertEqual(payload["profile_snapshot"]["recent_carted_product_ids"], [2])
+        self.assertEqual(payload["profile_snapshot"]["recent_chat_cues"], ["i need a quiet keyboard"])
+        self.assertGreater(payload["profile_snapshot"]["purchase_intent_score"], 0)
 
 
 @override_settings(KNOWLEDGE_BASE_DIR=KNOWLEDGE_BASE_DIR)

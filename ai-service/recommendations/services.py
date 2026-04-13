@@ -6,7 +6,7 @@ from decimal import Decimal, InvalidOperation
 import requests
 from django.conf import settings
 
-from .profile_utils import build_profile_snapshot
+from .profile_utils import BehavioralProfileBuilder
 
 logger = logging.getLogger(__name__)
 
@@ -125,10 +125,14 @@ class CartClient:
 
 
 class RecommendationService:
-    def __init__(self, product_client=None, interaction_client=None, cart_client=None):
+    def __init__(self, product_client=None, interaction_client=None, cart_client=None, profile_builder=None):
         self.product_client = product_client or ProductCatalogClient()
         self.interaction_client = interaction_client or InteractionAnalyticsClient()
         self.cart_client = cart_client or CartClient()
+        self.profile_builder = profile_builder or BehavioralProfileBuilder(
+            interaction_client=self.interaction_client,
+            cart_client=self.cart_client,
+        )
 
     def recommend_home(self, *, user_id=None, session_id=None, limit=10):
         products = self._load_products()
@@ -199,7 +203,12 @@ class RecommendationService:
                 self._apply_product_context(score_cards, products, product)
         self._apply_graph_neighbors(score_cards, cart_product_ids, reason_code="cart_graph_neighbor", source_key="cart_graph")
 
-        actor_context = self._build_actor_context(products, user_id=user_id, session_id=session_id)
+        actor_context = self._build_actor_context(
+            products,
+            user_id=user_id,
+            session_id=session_id,
+            cart_payload=cart_payload,
+        )
         self._apply_actor_context(score_cards, products, actor_context)
 
         items = self._rank(products, score_cards, limit=limit, exclude_ids=set(cart_product_ids))
@@ -223,6 +232,15 @@ class RecommendationService:
             "profile_snapshot": actor_context["profile_snapshot"],
         }
 
+    def get_model_status(self):
+        status_payload = self.profile_builder.status()
+        status_payload["runtime"] = {
+            "recommendation_limit_default": getattr(settings, "RECOMMENDATION_LIMIT_DEFAULT", 10),
+            "recommendation_limit_max": getattr(settings, "RECOMMENDATION_LIMIT_MAX", 20),
+            "request_timeout_seconds": getattr(settings, "REQUEST_TIMEOUT_SECONDS", 10),
+        }
+        return status_payload
+
     def _load_products(self):
         raw_products = self.product_client.fetch_products()
         products = {}
@@ -242,7 +260,7 @@ class RecommendationService:
             for product_id in products
         }
 
-    def _build_actor_context(self, products, *, user_id=None, session_id=None):
+    def _build_actor_context(self, products, *, user_id=None, session_id=None, cart_payload=None):
         if user_id is None and not session_id:
             return {
                 "interest_rows": [],
@@ -251,7 +269,7 @@ class RecommendationService:
                 "brand_counter": Counter(),
                 "price_points": [],
                 "recent_product_ids": [],
-                "profile_snapshot": build_profile_snapshot({}, [], []),
+                "profile_snapshot": self.profile_builder.empty(),
                 "scope_is_user": False,
             }
 
@@ -281,7 +299,12 @@ class RecommendationService:
                     seen_product_ids.add(int(product_id))
 
         interest_rows = self.interaction_client.fetch_user_interest(user_id=user_id, session_id=session_id, limit=5)
-        profile_snapshot = build_profile_snapshot(products, events, interest_rows)
+        profile_snapshot = self.profile_builder.build(
+            products,
+            user_id=user_id,
+            session_id=session_id,
+            cart_payload=cart_payload,
+        )
         return {
             "interest_rows": interest_rows,
             "similar_users": self.interaction_client.fetch_similar_users(user_id=user_id, session_id=session_id, limit=3),
@@ -309,6 +332,7 @@ class RecommendationService:
             actor_context["similar_users"],
             scope_is_user=actor_context["scope_is_user"],
         )
+        self._apply_behavioral_profile_bias(score_cards, products, actor_context["profile_snapshot"])
         self._apply_recent_product_bias(score_cards, products, actor_context["profile_snapshot"])
 
     def _apply_popularity(self, score_cards, product_gaps):
@@ -490,6 +514,85 @@ class RecommendationService:
             if product.get("brand_id") in recent_brands:
                 self._add_score(score_cards, product_id, 0.5, "profile_recent_brand_match", "profile_recent_brand")
 
+    def _apply_behavioral_profile_bias(self, score_cards, products, profile_snapshot):
+        top_categories = {
+            row["category_id"]: float(row.get("score", 0))
+            for row in profile_snapshot.get("top_categories", [])
+            if row.get("category_id") is not None
+        }
+        top_brands = {
+            row["brand_id"]: float(row.get("score", 0))
+            for row in profile_snapshot.get("top_brands", [])
+            if row.get("brand_id") is not None
+        }
+        top_price_bands = {
+            row["price_band"]: float(row.get("score", 0))
+            for row in profile_snapshot.get("top_price_bands", [])
+            if row.get("price_band")
+        }
+        strong_product_ids = {
+            row["product_id"]: float(row.get("score", 0))
+            for row in profile_snapshot.get("strong_product_interests", [])
+            if row.get("product_id") is not None
+        }
+        recent_carted = set(profile_snapshot.get("recent_carted_product_ids", []))
+        recent_purchased = set(profile_snapshot.get("recent_purchased_product_ids", []))
+        funnel_stage = profile_snapshot.get("funnel_stage")
+        purchase_intent_score = float(profile_snapshot.get("purchase_intent_score", 0) or 0)
+
+        for product_id, product in products.items():
+            category_id = product.get("category_id")
+            brand_id = product.get("brand_id")
+            if category_id in top_categories:
+                self._add_score(
+                    score_cards,
+                    product_id,
+                    min(top_categories[category_id] * 0.18, 2.5),
+                    "profile_top_category_match",
+                    "profile_top_category",
+                )
+            if brand_id in top_brands:
+                self._add_score(
+                    score_cards,
+                    product_id,
+                    min(top_brands[brand_id] * 0.12, 1.6),
+                    "profile_top_brand_match",
+                    "profile_top_brand",
+                )
+
+            price_band = self._price_band(product.get("base_price"))
+            if price_band in top_price_bands:
+                self._add_score(
+                    score_cards,
+                    product_id,
+                    min(top_price_bands[price_band] * 0.2, 1.3),
+                    "profile_price_band_match",
+                    "profile_price_band",
+                )
+
+            if product_id in strong_product_ids:
+                self._add_score(
+                    score_cards,
+                    product_id,
+                    min(strong_product_ids[product_id] * 0.1, 1.8),
+                    "profile_strong_interest",
+                    "profile_strong_interest",
+                )
+
+            if product_id in recent_carted:
+                self._add_score(score_cards, product_id, 1.2, "profile_recent_cart_match", "profile_recent_cart")
+            if product_id in recent_purchased:
+                self._add_score(score_cards, product_id, 0.7, "profile_recent_purchase_match", "profile_recent_purchase")
+
+            if funnel_stage in {"interested", "high-intent", "buyer"} and purchase_intent_score > 0.35:
+                self._add_score(
+                    score_cards,
+                    product_id,
+                    min(purchase_intent_score * 0.9, 0.9),
+                    "profile_purchase_intent",
+                    "profile_purchase_intent",
+                )
+
     def _serialize_product(self, product):
         return {
             "id": int(product["id"]),
@@ -524,6 +627,18 @@ class RecommendationService:
             return float(value)
         except (TypeError, ValueError):
             return 0.0
+
+    def _price_band(self, value):
+        amount = self._to_decimal(value)
+        if amount is None:
+            return None
+        if amount < Decimal("50"):
+            return "budget"
+        if amount < Decimal("150"):
+            return "mid"
+        if amount < Decimal("500"):
+            return "premium"
+        return "luxury"
 
     def _is_within_band(self, value, pivot, tolerance_ratio):
         tolerance = abs(pivot) * Decimal(str(tolerance_ratio))

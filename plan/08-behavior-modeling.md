@@ -1,36 +1,73 @@
-# Plan 08: Advanced Behavior Modeling and Learned Personalization
+# Plan 08: Behavioral Profile for Chat and Recommendation
+
+## Trang thai
+
+Reduced scope and refocused around core AI behavior loop.
 
 ## Muc tieu
 
-Xay lop AI hoc hanh vi nguoi dung tu interaction logs va knowledge graph de:
+Xay lop AI cot loi cua he thong theo dung flow:
 
-- du doan san pham tiep theo
-- hoc `user_embedding` va `product_embedding`
-- du doan purchase intent
-- tang chat luong recommendation
-- bo sung behavioral context cho chatbot / RAG
+`theo doi hanh vi -> tong hop behavioral profile -> dung profile cho recommend va chat`
 
-Plan nay la phase AI/ML dung nghia. No dung graph baseline cua Plan 06, recommendation baseline cua Plan 07, chatbot grounded MVP cua Plan 09, va demo-ready stack cua Plan 10 lam nen.
+Plan nay khong dat trong tam vao research model. Trong tam la bien interaction data thanh behavioral profile co the dung that trong runtime.
 
-## Vai tro cua Plan 08 trong toan he thong
+## Yeu cau cot loi ma plan nay phai dap ung
 
-- Plan 06 tra loi: cac entity lien ket voi nhau the nao
-- Plan 07 tra loi: co the recommend baseline bang heuristic + graph signal
-- Plan 09 tra loi: co the chat grounded + realtime routing
-- Plan 10 tra loi: he thong demo duoc va co personalization nhe
-- Plan 08 tra loi: tu data hanh vi, model hoc duoc pattern gi va dua lai gia tri learned vao recommend/chat
+He thong phai theo doi duoc cac hanh vi nhu:
 
-## Phu thuoc
+- view
+- click
+- add to cart
+- update cart
+- checkout
+- purchase
+- search
+- chat message
 
-Bat buoc co:
+Tu cac hanh vi do, he thong phai sinh ra duoc:
 
-- `interaction-service` ingest event on dinh
-- knowledge graph baseline chay on
-- `ai-service` baseline da co recommendation endpoint
-- chatbot grounded MVP da co retrieval va realtime routing
-- data interaction du lon va du sach de train
+- recommendation ca nhan hoa hon
+- chat co hieu biet ve muc do quan tam va ngu canh hanh vi cua user/session
 
-## Nguon du lieu
+Neu chua dung duoc behavioral profile cho ca `recommend` va `chat` thi Plan 08 chua xong.
+
+## Scope da rut gon
+
+### Bat buoc
+
+- tong hop behavioral events thanh `behavioral profile`
+- ho tro ca `user_id` va `session_id`
+- dung behavioral profile trong recommendation
+- dung behavioral profile trong chat
+- co baseline scoring hoac intent signal nhe neu can
+- co test va debug endpoint toi thieu
+
+### Khong lam trong plan nay
+
+- khong lam GNN
+- khong lam SPD manifold
+- khong lam graph neural embedding research
+- khong lam multi-model stack
+- khong lam heavy training pipeline
+- khong lam full MLOps hay model registry
+
+## Vai tro cua Plan 08 trong he thong
+
+Plan 05 va 06 da tao behavioral events va graph baseline.
+
+Plan 07 da co recommendation baseline.
+
+Plan 09 da co chat grounded baseline.
+
+Plan 08 phai la cau noi giua nhung phan do:
+
+- lay behavioral data tu `interaction-service`
+- rut ra behavioral profile co nghia
+- dua profile vao `ai-service`
+- cung mot profile do phuc vu ca recommend va chat
+
+## Dau vao co san tu repo
 
 ### Tu `interaction-service`
 
@@ -44,273 +81,215 @@ Bat buoc co:
 - `order_created`
 - `order_paid`
 - `order_completed`
-- `order_cancelled`
 - `chat_started`
 - `chat_message_sent`
 
 ### Tu `product-service`
 
-- product metadata
-- category
-- brand
-- product type
-- price band
-- tags
-- attributes
+- `product_id`
+- `category_id`
+- `brand_id`
+- `product_type_id`
+- `base_price`
+- `tags`
+- `attributes`
+- `is_active`
 
-### Tu graph layer
+### Tu graph baseline
 
-- weighted user-product edges
-- query-product relations
-- product-category relations
-- product-brand relations
-- similar users
-- similar products
+- `user_interest`
+- `product_neighbors`
+- `similar_users`
+- `query_paths`
 
-## Bieu dien du lieu chuan
+## Behavioral profile la artifact trung tam
 
-Khong train truc tiep tren raw logs roi dung thang trong serving. Can tao cac tang bieu dien sau:
+Plan nay khong lay embedding hay model file lam artifact trung tam.
 
-- interaction sequence theo user hoac session
-- weighted user-product matrix
-- graph edges co trong so
-- training dataset rieng cho tung bai toan
-- evaluation split ro rang theo time hoac session
+Artifact trung tam la:
 
-Vi du trong so interest:
+- `behavioral_profile`
 
-`w(u,p) = alpha * clicks + beta * cart + gamma * purchases`
+Moi `behavioral_profile` duoc tao theo:
 
-Trong do:
+- `user_id` neu da dinh danh user
+hoac
+- `session_id` neu user anonymous
 
-- click / view phan anh discovery
-- cart phan anh intent manh hon
-- purchase phan anh trust + preference cao nhat
+## Cau truc behavioral profile toi thieu
 
-## Bai toan cua Plan 08
+Behavioral profile can co cac nhom thong tin sau:
 
-### 1. Next-item prediction
+### Identity scope
 
-Input:
+- `user_id`
+- `session_id`
+- `scope_type`
 
-- chuoi hanh vi gan day cua user/session
+### Recent activity
 
-Output:
+- recent viewed products
+- recent clicked products
+- recent carted products
+- recent purchased products
+- recent searched queries
+- recent chat intents hoac message cues
 
-- top-K san pham co kha nang tuong tac tiep theo
+### Preference summary
 
-### 2. Purchase intent prediction
+- top categories
+- top brands
+- top price bands
+- strong product interests
+- graph interest summary
 
-Input:
+### Funnel / intent summary
 
-- hanh vi gan day
-- cart state
-- query pattern
+- cart intensity
+- purchase intensity
+- checkout activity
+- purchase intent score nhe
+- stage gan dung trong funnel: browser / interested / high-intent / buyer
 
-Output:
+## Bai toan duoc chot cho Plan 08
 
-- xac suat di den `order_paid` hoac `order_completed`
+Plan nay chi chot 2 bai toan runtime:
 
-### 3. User embedding learning
+### 1. Behavioral recommendation
 
-Output:
+Recommendation phai dung behavioral profile de:
 
-- vector bieu dien so thich, muc gia, category affinity, va behavioral style cua user
+- tang diem item match top category
+- tang diem item match top brand
+- tang diem item phu hop price band
+- uu tien graph neighbors lien quan toi lich su hanh vi
+- uu tien item gan voi recent viewed/carted/purchased context
 
-### 4. Product embedding learning
+### 2. Behavioral chat personalization
 
-Output:
+Chat phai dung behavioral profile de:
 
-- vector bieu dien tinh tuong dong giua san pham tu metadata + interaction pattern
+- biet user/session dang quan tam nhom san pham nao
+- uu tien retrieval lien quan toi recent interest
+- dieu chinh answer framing dua tren purchase intent nhe
+- tranh tra loi chung chung khi da co behavioral context ro rang
 
-### 5. User segmentation
+Chat van phai grounded. Behavioral profile chi bias retrieval va response framing, khong duoc lam sai fact.
 
-Muc tieu:
+## Cach lam implementation-first
 
-- nhom user theo hanh vi
-- phan biet window shoppers, high-intent buyers, category-focused users, v.v.
+Khong bat dau bang model nang. Bat dau bang 3 tang:
 
-## Model stack
+### 8A. Behavioral profile builder
 
-### Tang baseline bat buoc
+Tao command hoac service:
 
-- shallow embedding / matrix factorization
-- sequence baseline bang GRU hoac LSTM cho next-item prediction
-- MLP hoac gradient boosting cho purchase intent
+- `build_behavior_profile`
 
-### Tang graph model
+No phai tong hop data tu event log + catalog + graph summary thanh profile dung duoc cho runtime.
 
-- Graph Neural Network tren heterogeneous graph
-- sinh `user_embedding` va `product_embedding` tu graph neighborhood
+Co the build:
 
-### Tang research-level nang cao
+- on-demand theo request
+hoac
+- precompute nhe theo user/session
 
-- SPD manifold embedding
-- trust propagation
-- uncertainty-aware interaction representation
-- affine-invariant metric de do similarity / clustering
+Ban dau co the uu tien on-demand + cache nhe.
 
-Day la phan nghien cuu nang cao, co the la huong publishable neu duoc trien khai dung.
+### 8B. Baseline scoring / intent layer
 
-## Output ma model phai tao ra
+Chi them mot lop nhe, de profile co gia tri hon:
 
-Artifact can co:
+- weighted affinity score
+- purchase intent score nhe
 
-- `user_embedding`
-- `product_embedding`
-- `next_product_scores`
-- `purchase_intent_score`
-- `user_segment_label`
+Khuyen nghi baseline:
 
-Khong dung de artifact nam rieng trong notebook. Phai co cach export va tai lai trong `ai-service`.
+- rule-based weighted score
+hoac
+- logistic regression / gradient boosting nhe
 
-## Tich hop lai vao `ai-service`
+Neu du lieu chua du sach de train, van duoc phep bat dau bang weighted behavioral score truoc.
 
-### Recommendation
+### 8C. Runtime integration trong `ai-service`
 
-Sau khi train:
+Phai tich hop behavioral profile vao:
 
-- learned score duoc dung de rerank output heuristic cua Plan 07
-- top-K recommendation duoc ca nhan hoa manh hon
-- co the ket hop:
-  - heuristic score
-  - graph score
-  - learned score
+- recommendation endpoints
+- chat retrieval / chat response context
 
-### Chat / RAG
+Khong de behavioral profile dung rieng cho recommendation roi bo chat o muc optional.
 
-Chatbot co the dung them:
+## Viec phai lam
 
-- user embedding de bias retrieval
-- product embedding de tim context lien quan hon
-- purchase intent score de uu tien kieu tra loi va CTA phu hop
-- behavioral summary de tang personalization
+1. Chot schema cho `behavioral_profile`.
+2. Viet profile builder tu `interaction-service` + `product-service` + graph summary.
+3. Them helper de lay profile theo `user_id` hoac `session_id`.
+4. Tich hop profile vao recommendation scoring.
+5. Tich hop profile vao chat retrieval bias va context.
+6. Neu kha thi, them `purchase_intent_score` nhe.
+7. Viet test cho profile builder va runtime integration.
 
-## Pipeline chuan
+## API toi thieu
 
-1. ingest interaction logs
-2. xay training dataset
-3. tao graph-derived features
-4. train baseline model
-5. evaluate offline
-6. export model artifact
-7. tai model vao `ai-service`
-8. online inference / reranking
+Phai co cac API debug/runtime sau:
 
-## API va job nen co
-
-### Batch / training jobs
-
-- `build_behavior_dataset`
-- `train_next_item_model`
-- `train_purchase_intent_model`
-- `train_graph_embedding_model`
-- `evaluate_behavior_models`
-- `export_behavior_artifacts`
-
-### Runtime API de debug / serving
-
+- `GET /api/ai/profile/snapshot`
 - `GET /api/ai/models/status`
-- `POST /api/ai/models/evaluate`
-- `GET /api/ai/embeddings/user/{id}`
-- `GET /api/ai/embeddings/product/{id}`
-- `POST /api/ai/recommend/rerank`
 
-Neu can cho MVP nghien cuu, training command line va artifact export la du. Khong bat buoc phai co full training API ngay tu dau.
+Co the de recommendation dung profile noi bo trong endpoint hien co, khong bat buoc tao endpoint moi.
 
-## Metric bat buoc
+Khong bat buoc:
 
-### Recommendation / ranking
-
-- Recall@K
-- Precision@K
-- MRR
-- NDCG
-
-### Purchase intent
-
-- AUC
-- F1
-- Precision / Recall
-
-### Embedding / retrieval
-
-- nearest-neighbor relevance
-- hit rate
-- coverage
-
-### Business-facing proxy
-
-- cart-add lift
-- purchase conversion proxy
-- session depth proxy
+- training API
+- embedding API rieng
+- evaluation API rieng
 
 ## Deliverable
 
-- dataset builder
-- baseline next-item model
-- baseline purchase intent model
-- user/product embedding pipeline
-- offline evaluation report
-- model artifact export
-- integration voi recommendation
-- behavioral context feed cho chat
+- behavioral profile schema
+- profile builder
+- profile snapshot endpoint
+- recommendation co dung behavioral profile
+- chat co dung behavioral profile
+- purchase intent score nhe neu kip
+- test va demo flow
 
 ## Definition of Done
 
-- co it nhat 1 baseline model train duoc end-to-end
-- co metric offline ro rang
-- output model duoc dung that trong `ai-service`
-- recommendation co learned rerank hoac learned score
-- chat co behavioral context duoc hoc tu model hoac embedding
-- co artifact va report de demo
+- system track duoc cac hanh vi chinh: view, click, add cart, purchase, search, chat
+- build duoc behavioral profile cho `user_id` hoac `session_id`
+- recommendation output thay doi theo profile
+- chat retrieval hoac context thay doi theo profile
+- profile duoc dung that trong runtime, khong chi dung de report
+- co it nhat 1 debug endpoint de xem profile dang duoc dung
 
 ## Risk chinh
 
-- du lieu qua it hoac qua ban
-- smoke/demo data lam meo training
-- event semantics chua on dinh
-- label leakage
-- GNN / SPD qua nang neu chua chot baseline truoc
+- du lieu demo qua it de profile that su co y nghia
+- event semantics chua on dinh giua view/click/cart/purchase
+- session anonymous bi dut doan
+- neu nhung purchase intent score qua som, de overfit vao smoke data
 
-## Thu tu trien khai noi bo de tranh no scope
+## Thu tu thuc hien de tranh no scope
 
-### 8A. Dataset and feature export
+1. Behavioral profile schema
+2. Profile builder
+3. `GET /api/ai/profile/snapshot`
+4. Recommendation integration
+5. Chat integration
+6. Sau cung moi can nhac them purchase intent score nhe
 
-- export session sequence
-- export weighted user-product dataset
-- export graph-derived features
+## Phan de sau
 
-### 8B. Baseline next-item model
+Nhung muc sau de sau Plan 08 nay:
 
-- train sequence baseline
-- evaluate offline
-- export score artifact
-
-### 8C. Purchase intent baseline
-
-- train binary classifier
-- expose intent score cho `ai-service`
-
-### 8D. Learned reranking and embedding integration
-
-- rerank recommendation bang model output
-- bias retrieval bang embedding
-
-### 8E. Advanced graph / SPD research layer
-
+- learned user embedding
+- learned product embedding
+- deep sequence model
 - GNN
 - SPD manifold
 - trust propagation
+- advanced segmentation research
 
-## Ghi chu quan trong
-
-Plan 08 la full AI/ML phase. No khong thay the Plan 07, 09, 10 ma nang cap chung.
-
-No cung khong nen duoc bat dau bang GNN hoac SPD ngay lap tuc. Cach dung la:
-
-- baseline truoc
-- graph-aware model sau
-- research-level geometry cuoi cung
-
-Neu thuc hien dung thu tu nay, Plan 08 se la cau noi tu he thong AI demo-first sang he thong AI hoc duoc tu hanh vi that.
+Neu behavioral profile runtime da chay on va tao gia tri ro rang cho recommend/chat, khi do moi nen tach mot phase AI/ML research nang hon.

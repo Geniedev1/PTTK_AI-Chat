@@ -117,3 +117,34 @@ class RecommendationViewSet(viewsets.ViewSet):
             payload["profile_snapshot"],
         )
         return Response(payload)
+
+
+class ProfileViewSet(viewsets.ViewSet):
+    permission_classes = [AllowAny]
+    service_class = RecommendationService
+
+    @action(detail=False, methods=["get"], url_path="snapshot")
+    def snapshot(self, request):
+        serializer = ProfileSnapshotQuerySerializer(data=request.query_params)
+        serializer.is_valid(raise_exception=True)
+        validated = serializer.validated_data
+        if validated.get("user_id") is None and not validated.get("session_id"):
+            return Response({"detail": "Provide user_id or session_id."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            payload = self.service_class().get_profile_snapshot(
+                user_id=validated.get("user_id"),
+                session_id=validated.get("session_id"),
+            )
+        except ServiceClientError as exc:
+            return Response({"detail": str(exc)}, status=exc.status_code or status.HTTP_502_BAD_GATEWAY)
+        return Response(payload)
+
+
+class ModelStatusViewSet(viewsets.ViewSet):
+    permission_classes = [AllowAny]
+    service_class = RecommendationService
+
+    @action(detail=False, methods=["get"], url_path="status")
+    def status(self, request):
+        return Response(self.service_class().get_model_status())
