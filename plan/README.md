@@ -19,7 +19,11 @@ Thư mục này chứa roadmap triển khai theo thứ tự ưu tiên thực t�
 
 Thứ tự khuyến nghị:
 
-`01 -> 02 -> 03 -> 04 -> 05 -> 06 -> 07 -> 08 -> 09 -> 10`
+`01 -> 02 -> 03 -> 04 -> 05 -> 06 -> 07 -> 09 -> 10`
+
+`08` la future work sau demo, khong nam trong scope 5 ngay.
+
+Roadmap 07-10 da duoc rut gon theo huong demo-first va tich hop AI ngoai thay vi tu train model.
 
 ## Ghi chú
 

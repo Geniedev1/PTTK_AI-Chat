@@ -1,148 +1,158 @@
-# Plan 07: AI Data Layer and Recommendation Baseline
+# Plan 07: AI Service and Recommendation Baseline
 
-## Mục tiêu
+## Muc tieu
 
-Tạo AI read model riêng và recommendation baseline chạy được, giải thích được, không phụ thuộc runtime nặng vào core services.
+Tao `ai-service` nhe de phuc vu:
 
-Plan này đóng vai trò:
-- cầu nối giữa dữ liệu thô và AI
-- lớp baseline trước khi đưa deep learning vào
-- lớp read model phục vụ recommend và chat
+- recommendation baseline chay duoc
+- chat/retrieval layer o plan sau
+- tich hop AI ngoai nhu OpenAI / ChatGPT API
 
-## AI read model đề xuất
+Plan nay khong lam deep learning tu train. Muc tieu la demo chay duoc, giai thich duoc, de nang cap sau.
 
-### `ai_products`
+## Scope trong 5 ngay
 
-Product đã làm sạch để dùng cho:
-- retrieval
-- recommend
-- chat context
+### Bat buoc
 
-### `ai_user_events`
+- tao `ai-service`
+- tao endpoint recommendation baseline
+- lay du lieu tu `product-service`, `interaction-service`, `knowledge graph`
+- scoring heuristic + graph signal
+- co fallback cho cold-start
+- co log reason de debug/demo
 
-Interaction đã chuẩn hóa từ `interaction-service`
+### Khong lam trong plan nay
 
-### `user_profile_snapshot`
+- khong train model rieng
+- khong xay ETL phuc tap
+- khong can read model qua nang
+- khong can recommendation cache precompute cau ky
+- khong can A/B test
 
-Summary hành vi user để dùng cho:
-- personalization baseline
-- retrieval bias nhẹ
-- explainability
+## Nguon du lieu
 
-### `recommendation_cache`
-
-Top item gợi ý precomputed nếu cần
-
-## Đồng bộ dữ liệu cần có
-
-### Từ `product-service`
+### Tu `product-service`
 
 - product_id
 - name
 - short_description
 - full_description
-- category
-- brand
+- category_id
+- brand_id
 - price
-- stock snapshot
+- stock
 - tags
 - attributes
 - status
 
-### Từ `interaction-service`
+### Tu `interaction-service`
 
-- search/view/click/cart/order/chat events đã chuẩn hóa
+- top queries
+- product gaps
+- category interest
+- event stream da chuan hoa
 
-### Từ `knowledge graph`
+### Tu graph layer
 
-- graph-derived relation nếu cần để enrich scoring
-- product similarity signal
-- user-interest signal
+- product neighbors
+- user interest
+- similar users
+- query -> product relation
 
-## Recommendation baseline cần có
+## Kien truc de xuat
 
-### Home recommend
+`ai-service` la layer doc / score nhe:
+
+- doc catalog tu `product-service`
+- doc behavioral signal tu `interaction-service`
+- doc graph signal tu `interaction-service/graph/*`
+- tinh score va tra top-k
+
+Khong query truc tiep nhieu DB core trong moi request neu co the. Co the dung in-memory cache nhe neu can, nhung khong bat buoc trong MVP.
+
+## Recommendation baseline can co
+
+### `/api/ai/recommend/home`
 
 - trending products
-- new arrivals
-- recent-interest match
-- popular in preferred category
+- popular in interested category
+- graph-neighbor boosted items neu co user/session context
 
-### Product detail recommend
+### `/api/ai/recommend/product-detail`
 
 - same category
 - same brand
-- same price range
-- overlapping attributes/tags
-- graph-neighbor candidates nếu có
+- same price band
+- graph neighbors
 
-### Cart recommend
+### `/api/ai/recommend/cart`
 
 - also viewed
 - also bought
-- complementary items
 - category-compatible items
+- graph neighbors tu cac product trong cart
 
-## Logic scoring baseline
+## Scoring baseline
 
-Scoring phải đơn giản nhưng giải thích được.
-
-Ví dụ thành phần điểm:
+Scoring phai de giai thich. Moi item co tong diem tu:
 
 - popularity score
-- freshness score
 - category match score
 - brand match score
 - price affinity score
 - recent-interest score
 - graph relation bonus
 
-## Ràng buộc business
+Response nen tra kem:
 
-- loại item inactive
-- loại item out-of-stock nếu business yêu cầu
-- loại item user vừa mua nếu không phù hợp
-- giữ fallback cho cold-start user
+- `score`
+- `reason_codes`
+- `source_signals`
 
-## API cần có
+## Business rules
 
-- `/recommend/home`
-- `/recommend/product-detail`
-- `/recommend/cart`
+- loai item inactive
+- uu tien item con hang
+- khong tra lai item dang o context hien tai neu khong phu hop
+- co fallback cho user moi / session moi
 
-Có thể thêm:
+## API toi thieu
+
+- `GET /api/ai/recommend/home`
+- `GET /api/ai/recommend/product-detail?product_id={id}`
+- `GET /api/ai/recommend/cart?session_id={id}`
+
+Co the bo qua trong 5 ngay:
+
 - `/recommend/search-assist`
 - `/recommend/for-you`
 
-## Việc phải làm
+## Viec phai lam
 
-1. Tạo `ai-service`.
-2. Tạo schema read model cho AI.
-3. Làm job sync product sang AI.
-4. Làm job sync interaction sang AI.
-5. Đọc signal từ graph nếu cần.
-6. Xây scoring baseline có thể giải thích được.
-7. Viết API recommendation.
-8. Ghi log reason/score component cho debug và demo.
+1. Tao `ai-service`.
+2. Noi `ai-service` vao Docker va gateway.
+3. Tao service lay du lieu tu product / interaction / graph.
+4. Viet scoring baseline.
+5. Viet 3 endpoint recommendation.
+6. Tra kem `reason_codes` de giai thich.
+7. Viet test API co ban.
 
 ## Deliverable
 
-- `ai-service` đầu tiên
-- product sync pipeline
-- interaction sync pipeline
-- AI read model schema
-- API recommendation
-- logic scoring baseline
-- tài liệu giải thích score component
+- `ai-service`
+- recommendation endpoints baseline
+- scoring logic giai thich duoc
+- integration voi graph signal
+- test co ban
+- README / curl demo
 
 ## Definition of Done
 
-- recommendation endpoint trả dữ liệu ổn định
-- logic recommend giải thích được
-- AI không phải query trực tiếp nhiều DB core cho mọi request
-- có fallback cho cold-start
-- có thể kết hợp data từ graph nếu cần
+- 3 endpoint recommendation chay duoc
+- response on dinh cho user co lich su va cold-start
+- co `reason_codes` hoac score breakdown o muc co ban
+- khong can model tu train van recommend duoc
 
-## Phụ thuộc
+## Phu thuoc
 
-Phụ thuộc `05-interaction-tracking.md` và `06-knowledge-graph.md`.
+Phu thuoc `05-interaction-tracking.md` va `06-knowledge-graph.md`.

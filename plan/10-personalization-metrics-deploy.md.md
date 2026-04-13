@@ -1,148 +1,103 @@
-# Plan 10: Personalization, Metrics, Evaluation, and Deploy
+# Plan 10: Demo Readiness, Light Personalization, and Deploy
 
-## Mục tiêu
+## Muc tieu
 
-Nâng hệ thống từ mức baseline lên mức:
-- có personalization rõ ràng
-- đo được hiệu quả
-- có logging đủ để debug/demo
-- chạy được end-to-end bằng Docker
+Hoan thien ban demo end-to-end:
 
-Plan này là phần hoàn thiện sản phẩm và demo.
+- recommendation co personalization nhe
+- chatbot grounded co logging co ban
+- Docker stack chay duoc cho nguoi khac demo
+- co tai lieu va flow demo ro rang
 
-## Personalization scope
+Plan nay khong nham muc production-grade observability.
 
-### `user_profile_snapshot`
+## Scope trong 5 ngay
 
-Tối thiểu nên có:
+### Bat buoc
 
-- top categories quan tâm
-- top brands quan tâm
-- khoảng giá hay xem
+- user profile snapshot nhe
+- personalization score nhe cho recommend
+- personalization nhe cho chat retrieval
+- structured logs co ban
+- Docker / env / startup order on dinh
+- README demo nhanh
+
+### Khong lam trong plan nay
+
+- khong lam dashboard metrics day du
+- khong lam A/B testing
+- khong lam uplift evaluation nghiem tuc
+- khong lam model versioning
+- khong lam monitoring production-grade
+
+## Personalization baseline
+
+`user_profile_snapshot` toi thieu:
+
+- top categories
+- top brands neu co
 - recent viewed products
 - recent searched queries
-- graph-interest summary nếu có
-- model-derived preference signal nếu có
+- recent graph-interest summary
 
-## Personalized recommendation
+Recommendation co the cong them diem khi:
 
-- cộng thêm điểm khi sản phẩm khớp preference snapshot
-- cộng thêm điểm từ model embedding / intent signal
-- vẫn giữ fallback cho cold-start
+- match top category
+- match top brand
+- gan price band user hay xem
+- gan graph neighbors user vua tuong tac
 
-## Personalized retrieval for chatbot
+Chat retrieval co the bias nhe theo:
 
-- bias nhẹ theo category/brand/price range user quan tâm
-- có thể dùng recent behavior hoặc embedding similarity
-- không để personalization bóp hẹp toàn bộ kết quả
+- recent category interest
+- recent product interest
 
-## Metrics cần đo
-
-### Interaction / funnel
-
-- search volume
-- click-through rate
-- add-to-cart rate
-- purchase rate
-
-### Recommendation
-
-- CTR on recommended items
-- add-to-cart after recommendation
-- purchase after recommendation
-- hit rate của reranking nếu có
-
-### Chatbot
-
-- retrieval hit rate
-- fallback rate
-- latency
-- grounded answer rate
-- realtime-intent routing success rate
-
-### Model
-
-- Recall@K / HitRate@K / MRR hoặc F1 tùy bài toán
-- uplift so với baseline
-
-### System
-
-- API error rate
-- request latency
-- event volume theo ngày
-- embedding/index build duration
-
-## Logging cần có
+## Logging toi thieu
 
 - request_id
-- user_id
-- session_id
+- user_id / session_id
 - endpoint
 - latency
-- error_code
-- recommendation reason / score component
-- retrieved source ids cho chatbot
-- graph query trace nếu cần
-- model version nếu có ML output
+- error_code neu co
+- recommendation reason codes
+- retrieved source ids cho chat
 
 ## Testing scope
 
-### API tests
-
 - recommend endpoints
 - chat endpoint
-- realtime intent router
-
-### Data tests
-
-- sync job
-- graph build
-- chunking/embedding consistency
-
-### Demo tests
-
-- hai user khác history nhận gợi ý hơi khác nhau
-- chat cùng câu hỏi nhưng context retrieval khác nhẹ theo interest
+- realtime routing flow
+- graph rebuild command
+- Docker smoke test
 
 ## Deploy scope
 
-- Dockerfile cho service còn thiếu
-- `docker-compose.yml` hoàn chỉnh
-- Neo4j / PostgreSQL / vector DB hoặc local index
-- seed data
-- env vars
-- startup order
-- demo script
-- README chạy nhanh
+- `docker-compose.yml` hoan chinh
+- env vars mau
+- startup order ro rang
+- README chay nhanh
+- demo script / curl examples
 
-## Việc phải làm
+## Viec phai lam
 
-1. Tạo job build `user_profile_snapshot`.
-2. Cộng score personalization vào recommend.
-3. Thêm personalized retrieval nhẹ cho chat.
-4. Tích hợp model output vào production-like flow.
-5. Thêm structured logging và metrics cơ bản.
-6. Viết test cho AI endpoint.
-7. Hoàn thiện Docker Compose cho toàn hệ.
-8. Viết README/demo script/report.
+1. Tao `user_profile_snapshot` nhe tu interaction/graph.
+2. Cong score personalization vao recommendation baseline.
+3. Bias retrieval nhe cho chat.
+4. Them structured logging co ban.
+5. Viet smoke test cho AI endpoints.
+6. Chot Docker Compose va README demo.
 
 ## Deliverable
 
-- personalization baseline
-- metrics dashboard hoặc report query
-- structured logs
-- test cơ bản
-- docker-compose chạy được
-- tài liệu demo và báo cáo
+- personalization baseline nhe
+- logs co ban de debug
+- smoke tests
+- Docker demo chay duoc
+- README / demo script
 
 ## Definition of Done
 
-- hai user khác history nhận gợi ý hơi khác nhau
-- chatbot có thể dùng personalization nhẹ nhưng vẫn grounded
-- hệ thống có số liệu để demo
-- có log đủ để giải thích recommendation/chat behavior
-- người khác clone repo có thể chạy được bằng Docker
-
-## Phụ thuộc
-
-Phụ thuộc `07-ai-data-and-recommendation.md`, `08-behavior-modeling.md`, `09-rag-chatbot.md`.
+- hai user/session co the nhan recommend hoi khac nhau
+- chatbot van grounded khi co personalization nhe
+- nguoi khac clone repo va chay demo duoc bang Docker
+- co du log de giai thich output khi demo

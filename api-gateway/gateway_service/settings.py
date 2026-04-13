@@ -49,6 +49,7 @@ SERVICE_ROUTES = {
     "/api/products/": os.getenv("PRODUCT_SERVICE_URL", "http://product-service:8004"),
     "/api/orders/": os.getenv("ORDER_SERVICE_URL", "http://order-service:8005"),
     "/api/interactions/": os.getenv("INTERACTION_SERVICE_URL", "http://interaction-service:8006"),
+    "/api/ai/": os.getenv("AI_SERVICE_URL", "http://ai-service:8007"),
 }
 
 PROXY_TIMEOUT = int(os.getenv("PROXY_TIMEOUT", "30"))

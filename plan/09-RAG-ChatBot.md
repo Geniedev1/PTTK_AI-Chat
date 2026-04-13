@@ -1,23 +1,41 @@
-# Plan 09: RAG Chatbot and GraphRAG Integration
+# Plan 09: RAG Chatbot MVP with External AI
 
-## Mục tiêu
+## Muc tieu
 
-Tạo chatbot grounded, trả lời dựa trên context thật từ catalog, FAQ và policy; đồng thời có thể tận dụng graph và user behavior để nâng chất lượng retrieval.
+Tao chatbot grounded cho e-commerce bang cach dung AI ngoai nhu OpenAI / ChatGPT API, khong tu host LLM, khong tu train model rieng.
 
-Plan này phải phân biệt rõ:
-- fact retrieval
-- realtime API routing
-- personalization support
-- graph-aware context expansion
+Chatbot phai:
 
-## Knowledge source ban đầu
+- tra loi duoc cau hoi ve san pham va policy
+- biet fallback neu thieu du lieu
+- route cau hoi realtime sang core API khi can
+- co the dung graph context nhe neu co loi
+
+## Scope trong 5 ngay
+
+### Bat buoc
+
+- chat endpoint trong `ai-service`
+- embedding + retrieval cho product/policy text
+- prompt template co guardrail
+- realtime intent routing co ban
+- tich hop OpenAI API
+
+### Khong lam trong plan nay
+
+- khong lam GraphRAG phuc tap
+- khong lam multi-stage rerank cau ky
+- khong lam intent classifier train rieng
+- khong lam orchestration research-level
+
+## Nguon du lieu retrieval
 
 ### Product knowledge
 
-- product catalog
-- product description
-- category
-- brand
+- name
+- short_description
+- full_description
+- category / brand
 - notable attributes
 
 ### Business knowledge
@@ -27,145 +45,90 @@ Plan này phải phân biệt rõ:
 - return policy
 - payment policy
 
-## Không đưa vào giai đoạn đầu qua vector DB
+## Kien truc de xuat
 
-- realtime order status
-- realtime inventory
-- realtime price nếu thay đổi liên tục
-- dữ liệu nhạy cảm không cần thiết
+`ai-service` se:
 
-## Chuẩn bị dữ liệu retrieval
+1. nhan user query
+2. detect realtime hay retrieval question
+3. neu la realtime:
+   - goi core API that
+   - format lai cau tra loi
+4. neu la retrieval:
+   - embed query bang external embedding API
+   - lay top-k chunks
+   - lay graph context nhe neu can
+   - build prompt
+   - goi chat completion API
 
-### Với product
+## Realtime intents bat buoc
 
-Ghép text từ:
-- tên sản phẩm
-- mô tả ngắn
-- mô tả dài
-- category
-- brand
-- thuộc tính nổi bật
+Nhung cau hoi sau khong duoc tra loi chi bang vector search:
 
-### Với policy/FAQ
+- order status
+- current stock
+- current price neu can xac thuc runtime
+- cart/order related status
 
-- chunk theo ý nghĩa hoàn chỉnh
-- tránh chunk quá dài
-- tránh chunk quá vụn
-- giữ metadata rõ ràng
+Phai route sang API that roi moi tra loi.
 
-## Vector layer
+## Personalization nhe
 
-Mỗi chunk cần có:
+Co the them nhe:
 
-- `text`
-- `embedding`
-- `source_type`
-- `source_id`
-- `product_id` nếu có
-- `title`
-- `category`
-- `brand`
-- `policy_type` nếu có
+- top category user quan tam
+- recent viewed products
+- recent searched queries
 
-## GraphRAG layer
-
-Ngoài vector retrieval, cần có graph retrieval:
-
-- user recent-interest nodes
-- related product neighbors
-- category neighbors
-- graph-derived similar products
-- query-product relation nếu có
-
-### Ý nghĩa
-
-Chat không chỉ dựa vào semantic vector match, mà còn có thể:
-- expand context theo relation
-- cá nhân hóa vừa phải
-- grounded tốt hơn trong domain e-commerce
-
-## Chat flow chuẩn
-
-1. nhận câu hỏi
-2. classify intent sơ bộ
-3. nếu là realtime intent thì route sang core API
-4. nếu là catalog/policy intent thì:
-   - embed query
-   - retrieve top-k vector chunks
-   - retrieve graph context liên quan
-   - lấy user profile / behavior context nếu phù hợp
-   - merge context
-   - build prompt có guardrail
-   - gọi LLM
-5. trả lời có căn cứ hoặc fallback an toàn
-
-## Intent routing bắt buộc
-
-Các intent như:
-- trạng thái đơn hàng
-- giá hiện tại
-- tồn kho hiện tại
-- khuyến mãi realtime
-
-không được chỉ dựa vào vector search.
-Phải route sang core API thật rồi mới format câu trả lời.
-
-## Personalization trong chat
-
-Có thể thêm nhẹ:
-
-- ưu tiên category user quan tâm
-- ưu tiên brand user quan tâm
-- bias retrieval theo price range user hay xem
-- thêm “recent interest” vào context
-
-Không được personalization quá mạnh tới mức bóp méo fact.
+Khong duoc de personalization lam meo fact.
 
 ## Prompt guardrail
 
-Prompt phải ràng buộc:
+Prompt phai ro:
 
-- chỉ trả lời dựa trên context được cung cấp
-- không tự bịa tồn kho, giá, order status
-- nếu thiếu dữ liệu thì nói không chắc / không có thông tin
-- nếu là realtime question thì yêu cầu dùng API tương ứng
+- chi dung context duoc cung cap
+- khong tu dua gia / ton kho / order status neu chua goi API
+- neu thieu context thi noi ro gioi han
+- uu tien cau tra loi ngan, grounded, de kiem chung
 
-## Fallback behavior
+## API toi thieu
 
-- không có data phù hợp → trả lời an toàn
-- retrieval yếu → xin user làm rõ
-- intent động nhưng chưa có API → nói rõ giới hạn hiện tại
+- `POST /api/ai/chat`
+- `POST /api/ai/chat/retrieve` neu muon tach debug
 
-## Việc phải làm
+Response nen co:
 
-1. Tạo pipeline chunking.
-2. Tạo embedding pipeline.
-3. Tạo vector index.
-4. Viết chat endpoint trong `ai-service`.
-5. Thiết kế prompt template có guardrail.
-6. Tạo intent router cho câu hỏi realtime.
-7. Tích hợp graph retrieval.
-8. Tích hợp user profile / behavior context nhẹ.
-9. Log retrieved source ids để debug và đo grounding.
+- `answer`
+- `sources`
+- `used_realtime_api`
+- `used_graph_context`
+
+## Viec phai lam
+
+1. Chon external AI provider.
+2. Tao prompt template va config API key.
+3. Tao chunking + embedding pipeline cho product/policy.
+4. Tao retrieval layer.
+5. Tao realtime intent router.
+6. Viet chat endpoint.
+7. Them logging nguon context.
+8. Viet smoke test / demo script.
 
 ## Deliverable
 
-- vectorized product/policy data
-- chat API
-- prompt template
-- intent routing logic
-- graph retrieval integration
-- chatbot UI hoặc demo endpoint
-- log retrieved sources
+- chat API MVP
+- retrieval pipeline cho product/policy
+- realtime routing co ban
+- OpenAI integration
+- source logging cho debug
 
 ## Definition of Done
 
-- chatbot trả lời được câu hỏi về sản phẩm và chính sách
-- biết fallback khi không có dữ liệu
-- không khẳng định dữ liệu realtime nếu chưa gọi API thật
-- có sử dụng graph context ở ít nhất 1 luồng retrieval
-- có logging nguồn context để kiểm tra grounding
+- chatbot tra loi duoc cau hoi san pham / policy
+- route duoc it nhat 1 nhom realtime intent
+- khong hallucinate du lieu realtime khi chua goi API
+- response co kem nguon context o muc co ban
 
-## Phụ thuộc
+## Phu thuoc
 
-Phụ thuộc `06-knowledge-graph.md`, `07-ai-data-and-recommendation.md`, `08-behavior-modeling.md`.
+Phu thuoc `06-knowledge-graph.md` va `07-ai-and-recommend.md`.

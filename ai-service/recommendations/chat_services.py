@@ -1,0 +1,728 @@
+import json
+import logging
+import math
+import re
+from dataclasses import dataclass
+from pathlib import Path
+
+import requests
+from django.conf import settings
+
+from .profile_utils import build_profile_snapshot
+from .services import ProductCatalogClient, ServiceClientError
+
+
+logger = logging.getLogger(__name__)
+
+TOKEN_PATTERN = re.compile(r"[a-zA-Z0-9]+")
+CART_KEYWORDS = ("cart", "gio hang", "basket", "checkout")
+PRICE_KEYWORDS = ("price", "gia", "bao nhieu")
+STOCK_KEYWORDS = ("stock", "ton kho", "con hang", "available")
+ORDER_STATUS_TERMS = ("status", "trang thai", "pending", "confirmed", "paid", "completed", "cancelled", "my order", "where is")
+
+
+@dataclass
+class KnowledgeChunk:
+    source_type: str
+    source_id: str
+    title: str
+    text: str
+    product_id: int | None = None
+    category_id: int | None = None
+    brand_id: int | None = None
+
+
+class OrderClient:
+    def __init__(self):
+        self.base_url = getattr(settings, "ORDER_SERVICE_URL", "").rstrip("/")
+        self.timeout = getattr(settings, "REQUEST_TIMEOUT_SECONDS", 10)
+
+    def fetch_order(self, *, order_id=None, customer_id=None, session_id=None):
+        if not self.base_url:
+            raise ServiceClientError("ORDER_SERVICE_URL is not configured.")
+
+        headers = {}
+        params = {}
+        if session_id:
+            headers["X-Cart-Session-Key"] = str(session_id)
+        if customer_id is not None:
+            params["customer_id"] = int(customer_id)
+
+        try:
+            if order_id is not None:
+                response = requests.get(
+                    f"{self.base_url}/api/orders/{int(order_id)}",
+                    headers=headers,
+                    params=params,
+                    timeout=self.timeout,
+                )
+            else:
+                response = requests.get(
+                    f"{self.base_url}/api/orders/",
+                    headers=headers,
+                    params=params,
+                    timeout=self.timeout,
+                )
+        except requests.RequestException as exc:
+            raise ServiceClientError(f"Order service request failed: {exc}") from exc
+
+        if response.status_code == 404:
+            return None
+        if response.status_code >= 400:
+            raise ServiceClientError("Order service returned an error.", status_code=response.status_code)
+
+        payload = response.json()
+        if order_id is not None:
+            return payload
+        if isinstance(payload, list) and payload:
+            return payload[0]
+        return None
+
+
+class CartStatusClient:
+    def __init__(self):
+        self.base_url = getattr(settings, "CART_SERVICE_URL", "").rstrip("/")
+        self.timeout = getattr(settings, "REQUEST_TIMEOUT_SECONDS", 10)
+
+    def fetch_current_cart(self, session_id):
+        if not self.base_url:
+            raise ServiceClientError("CART_SERVICE_URL is not configured.")
+        try:
+            response = requests.get(
+                f"{self.base_url}/api/cart/current",
+                headers={"X-Cart-Session-Key": str(session_id)},
+                timeout=self.timeout,
+            )
+        except requests.RequestException as exc:
+            raise ServiceClientError(f"Cart service request failed: {exc}") from exc
+
+        if response.status_code >= 400:
+            raise ServiceClientError("Cart service returned an error.", status_code=response.status_code)
+        return response.json()
+
+
+class InteractionContextClient:
+    def __init__(self):
+        self.base_url = getattr(settings, "INTERACTION_SERVICE_URL", "").rstrip("/")
+        self.timeout = getattr(settings, "REQUEST_TIMEOUT_SECONDS", 10)
+
+    def _get_optional(self, path, params=None):
+        if not self.base_url:
+            return []
+        try:
+            response = requests.get(
+                f"{self.base_url}{path}",
+                params=params or {},
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            logger.warning("Interaction context request failed for %s: %s", path, exc)
+            return []
+        return response.json()
+
+    def emit_chat_event(self, *, event_type, message, user_id=None, session_id=None, metadata=None):
+        if not self.base_url:
+            return False
+        payload = {
+            "event_type": event_type,
+            "user_id": user_id,
+            "session_id": session_id,
+            "query_text": message[:500],
+            "source": "ai-service",
+            "metadata": metadata or {},
+        }
+        try:
+            response = requests.post(
+                f"{self.base_url}/api/interactions/events",
+                json=payload,
+                timeout=self.timeout,
+            )
+            return response.status_code == 201
+        except requests.RequestException:
+            return False
+
+    def fetch_user_interest(self, *, user_id=None, session_id=None, limit=3):
+        params = {"limit": limit}
+        if user_id is not None:
+            params["user_id"] = int(user_id)
+        elif session_id:
+            params["session_id"] = session_id
+        else:
+            return []
+        return self._get_optional("/api/interactions/graph/user_interest", params=params)
+
+    def fetch_query_paths(self, *, query_text, limit=3):
+        if not query_text:
+            return []
+        return self._get_optional(
+            "/api/interactions/graph/query_paths",
+            params={"query_text": query_text, "limit": limit},
+        )
+
+    def fetch_events(self, *, user_id=None, session_id=None, limit=20):
+        params = {"limit": limit}
+        if user_id is not None:
+            params["user_id"] = int(user_id)
+        elif session_id:
+            params["session_id"] = session_id
+        else:
+            return []
+        return self._get_optional("/api/interactions/events", params=params)
+
+
+class OpenAIClient:
+    def __init__(self):
+        self.base_url = getattr(settings, "OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
+        self.api_key = getattr(settings, "OPENAI_API_KEY", "")
+        self.chat_model = getattr(settings, "OPENAI_CHAT_MODEL", "gpt-5-mini")
+        self.embedding_model = getattr(settings, "OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
+        self.timeout = getattr(settings, "REQUEST_TIMEOUT_SECONDS", 10)
+
+    @property
+    def enabled(self):
+        return bool(self.api_key)
+
+    def _headers(self):
+        return {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+    def generate_answer(self, *, prompt, question):
+        if not self.enabled:
+            return None
+        payload = {
+            "model": self.chat_model,
+            "instructions": prompt,
+            "input": [
+                {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": question}],
+                }
+            ],
+        }
+        try:
+            response = requests.post(
+                f"{self.base_url}/responses",
+                headers=self._headers(),
+                json=payload,
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            logger.warning("OpenAI response request failed: %s", exc)
+            return None
+
+        data = response.json()
+        if data.get("output_text"):
+            return data["output_text"].strip()
+
+        parts = []
+        for output in data.get("output", []):
+            for content in output.get("content", []):
+                if content.get("type") == "output_text" and content.get("text"):
+                    parts.append(content["text"])
+        joined = "\n".join(part.strip() for part in parts if part.strip()).strip()
+        return joined or None
+
+    def embed_texts(self, texts):
+        if not self.enabled or not getattr(settings, "OPENAI_ENABLE_EMBEDDINGS", True) or not texts:
+            return None
+        payload = {
+            "model": self.embedding_model,
+            "input": texts,
+        }
+        try:
+            response = requests.post(
+                f"{self.base_url}/embeddings",
+                headers=self._headers(),
+                json=payload,
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            logger.warning("OpenAI embedding request failed: %s", exc)
+            return None
+        data = response.json()
+        return [row.get("embedding", []) for row in data.get("data", [])]
+
+
+class ChatbotService:
+    def __init__(
+        self,
+        product_client=None,
+        order_client=None,
+        cart_client=None,
+        interaction_client=None,
+        openai_client=None,
+    ):
+        self.product_client = product_client or ProductCatalogClient()
+        self.order_client = order_client or OrderClient()
+        self.cart_client = cart_client or CartStatusClient()
+        self.interaction_client = interaction_client or InteractionContextClient()
+        self.openai_client = openai_client or OpenAIClient()
+
+    def chat(self, *, message, user_id=None, session_id=None, customer_id=None, product_id=None, order_id=None):
+        normalized_message = message.strip()
+        self.interaction_client.emit_chat_event(
+            event_type="chat_message_sent",
+            message=normalized_message,
+            user_id=user_id,
+            session_id=session_id,
+            metadata={"customer_id": customer_id, "product_id": product_id, "order_id": order_id},
+        )
+
+        realtime = self._route_realtime(
+            normalized_message,
+            user_id=user_id,
+            session_id=session_id,
+            customer_id=customer_id,
+            product_id=product_id,
+            order_id=order_id,
+        )
+        if realtime is not None:
+            return realtime
+
+        retrieval = self.retrieve(
+            message=normalized_message,
+            user_id=user_id,
+            session_id=session_id,
+            product_id=product_id,
+            limit=getattr(settings, "CHAT_RETRIEVAL_LIMIT", 5),
+        )
+        answer = self._generate_grounded_answer(normalized_message, retrieval)
+        return {
+            "answer": answer,
+            "sources": retrieval["sources"],
+            "used_realtime_api": False,
+            "used_graph_context": retrieval["used_graph_context"],
+            "retrieval_mode": retrieval["retrieval_mode"],
+            "profile_snapshot": retrieval["profile_snapshot"],
+        }
+
+    def retrieve(self, *, message, user_id=None, session_id=None, product_id=None, limit=5):
+        products = self.product_client.fetch_products()
+        product_lookup = {
+            int(product["id"]): product
+            for product in products
+            if product.get("is_active", False)
+        }
+        profile_snapshot = self._build_profile_snapshot(product_lookup, user_id=user_id, session_id=session_id)
+        chunks = self._build_chunks(products)
+        selected_chunks, retrieval_mode = self._select_chunks(
+            message=message,
+            chunks=chunks,
+            product_id=product_id,
+            profile_snapshot=profile_snapshot,
+            limit=limit,
+        )
+        graph_context = self._build_graph_context(message=message, user_id=user_id, session_id=session_id)
+        return {
+            "query": message,
+            "sources": [self._chunk_to_source(chunk, score) for chunk, score in selected_chunks],
+            "graph_context": graph_context,
+            "used_graph_context": bool(graph_context),
+            "retrieval_mode": retrieval_mode,
+            "profile_snapshot": profile_snapshot,
+        }
+
+    def _route_realtime(self, message, *, user_id=None, session_id=None, customer_id=None, product_id=None, order_id=None):
+        lowered = message.lower()
+        if self._is_order_status_question(lowered, order_id=order_id):
+            return self._answer_order_status(customer_id=customer_id, session_id=session_id, order_id=order_id)
+        if self._contains_any(lowered, CART_KEYWORDS):
+            return self._answer_cart_status(session_id=session_id)
+        if self._contains_any(lowered, PRICE_KEYWORDS) or self._contains_any(lowered, STOCK_KEYWORDS):
+            return self._answer_product_runtime(lowered, product_id=product_id)
+        return None
+
+    def _answer_order_status(self, *, customer_id=None, session_id=None, order_id=None):
+        order = self.order_client.fetch_order(order_id=order_id, customer_id=customer_id, session_id=session_id)
+        if not order:
+            answer = "I could not find an order in the current scope. Provide `order_id`, or send `customer_id` or `session_id` so I can check the latest order."
+            return {
+                "answer": answer,
+                "sources": [],
+                "used_realtime_api": True,
+                "used_graph_context": False,
+                "retrieval_mode": "realtime-order",
+            }
+
+        order_identifier = order.get("id")
+        status_text = order.get("status", "UNKNOWN")
+        total_amount = order.get("total_amount")
+        item_count = len(order.get("items", []))
+        answer = f"Order #{order_identifier} is currently `{status_text}`. Total amount is {total_amount} with {item_count} item(s)."
+        return {
+            "answer": answer,
+            "sources": [
+                {
+                    "source_type": "realtime_order",
+                    "source_id": str(order_identifier),
+                    "title": f"Order #{order_identifier}",
+                    "excerpt": json.dumps({"status": status_text, "total_amount": total_amount}),
+                }
+            ],
+            "used_realtime_api": True,
+            "used_graph_context": False,
+            "retrieval_mode": "realtime-order",
+        }
+
+    def _answer_cart_status(self, *, session_id=None):
+        if not session_id:
+            return {
+                "answer": "I need `session_id` to inspect the current cart.",
+                "sources": [],
+                "used_realtime_api": True,
+                "used_graph_context": False,
+                "retrieval_mode": "realtime-cart",
+            }
+
+        cart = self.cart_client.fetch_current_cart(session_id)
+        answer = (
+            f"Current cart has {cart.get('item_count', 0)} line item(s), "
+            f"{cart.get('total_quantity', 0)} total unit(s), "
+            f"and subtotal {cart.get('subtotal_amount', '0.00')}."
+        )
+        return {
+            "answer": answer,
+            "sources": [
+                {
+                    "source_type": "realtime_cart",
+                    "source_id": session_id,
+                    "title": f"Cart {session_id}",
+                    "excerpt": json.dumps(
+                        {
+                            "item_count": cart.get("item_count", 0),
+                            "total_quantity": cart.get("total_quantity", 0),
+                            "subtotal_amount": cart.get("subtotal_amount", "0.00"),
+                        }
+                    ),
+                }
+            ],
+            "used_realtime_api": True,
+            "used_graph_context": False,
+            "retrieval_mode": "realtime-cart",
+        }
+
+    def _answer_product_runtime(self, message, *, product_id=None):
+        products = self.product_client.fetch_products()
+        product = self._resolve_product(products, explicit_product_id=product_id, message=message)
+        if not product:
+            return {
+                "answer": "I need a `product_id` or a clearer product name to verify current price or stock.",
+                "sources": [],
+                "used_realtime_api": True,
+                "used_graph_context": False,
+                "retrieval_mode": "realtime-product",
+            }
+
+        product_id = int(product["id"])
+        runtime_product = self.product_client.fetch_product(product_id)
+        wants_price = self._contains_any(message, PRICE_KEYWORDS)
+        wants_stock = self._contains_any(message, STOCK_KEYWORDS)
+
+        segments = [f"Product `{runtime_product.get('name')}`"]
+        if wants_price or not wants_stock:
+            segments.append(f"current price is {runtime_product.get('base_price')}")
+        if wants_stock or not wants_price:
+            in_stock = "in stock" if runtime_product.get("has_stock") else "currently out of stock"
+            segments.append(in_stock)
+        answer = ", ".join(segments) + "."
+
+        return {
+            "answer": answer,
+            "sources": [
+                {
+                    "source_type": "realtime_product",
+                    "source_id": str(product_id),
+                    "title": runtime_product.get("name") or f"Product {product_id}",
+                    "excerpt": json.dumps(
+                        {
+                            "base_price": runtime_product.get("base_price"),
+                            "stock": runtime_product.get("stock"),
+                            "has_stock": runtime_product.get("has_stock"),
+                        }
+                    ),
+                }
+            ],
+            "used_realtime_api": True,
+            "used_graph_context": False,
+            "retrieval_mode": "realtime-product",
+        }
+
+    def _build_chunks(self, products):
+        chunks = []
+        for product in products:
+            if not product.get("is_active", False):
+                continue
+            product_text = self._product_text(product)
+            chunks.append(
+                KnowledgeChunk(
+                    source_type="product",
+                    source_id=str(product["id"]),
+                    title=product.get("name") or f"Product {product['id']}",
+                    text=product_text,
+                    product_id=int(product["id"]),
+                    category_id=product.get("category_id"),
+                    brand_id=product.get("brand_id"),
+                )
+            )
+
+        knowledge_dir = Path(getattr(settings, "KNOWLEDGE_BASE_DIR"))
+        for policy_path in sorted((knowledge_dir / "policies").glob("*.md")):
+            text = policy_path.read_text(encoding="utf-8")
+            for index, chunk_text in enumerate(self._split_text(text), start=1):
+                chunks.append(
+                    KnowledgeChunk(
+                        source_type="policy",
+                        source_id=f"{policy_path.stem}-{index}",
+                        title=policy_path.stem.replace("-", " ").title(),
+                        text=chunk_text,
+                    )
+                )
+        return chunks
+
+    def _select_chunks(self, *, message, chunks, product_id=None, profile_snapshot=None, limit=5):
+        if not chunks:
+            return [], "empty"
+
+        query_text = message.strip()
+        embedding_scores = self._rank_chunks_by_embedding(query_text, chunks)
+        if embedding_scores:
+            ranked = self._apply_profile_bias_to_ranked_chunks(embedding_scores, profile_snapshot)
+            mode = "embedding"
+        else:
+            ranked = self._rank_chunks_lexically(
+                query_text,
+                chunks,
+                product_id=product_id,
+                profile_snapshot=profile_snapshot,
+            )
+            mode = "lexical"
+        return ranked[:limit], mode
+
+    def _rank_chunks_by_embedding(self, query_text, chunks):
+        payload = [query_text] + [chunk.text for chunk in chunks]
+        embeddings = self.openai_client.embed_texts(payload)
+        if not embeddings or len(embeddings) != len(payload):
+            return None
+        query_embedding = embeddings[0]
+        ranked = []
+        for chunk, chunk_embedding in zip(chunks, embeddings[1:]):
+            score = self._cosine_similarity(query_embedding, chunk_embedding)
+            if score > 0:
+                ranked.append((chunk, score))
+        ranked.sort(key=lambda item: (-item[1], item[0].source_type, item[0].source_id))
+        return ranked
+
+    def _rank_chunks_lexically(self, query_text, chunks, *, product_id=None, profile_snapshot=None):
+        query_tokens = self._tokens(query_text)
+        ranked = []
+        for chunk in chunks:
+            text_tokens = self._tokens(chunk.text)
+            overlap = len(query_tokens & text_tokens)
+            score = float(overlap)
+            if product_id is not None and chunk.product_id == int(product_id):
+                score += 3.0
+            if any(token in (chunk.title or "").lower() for token in query_tokens):
+                score += 1.0
+            if chunk.source_type == "policy" and any(token in chunk.text.lower() for token in query_tokens):
+                score += 0.5
+            score += self._profile_bias(chunk, profile_snapshot or {})
+            if score > 0:
+                ranked.append((chunk, score))
+
+        ranked.sort(key=lambda item: (-item[1], item[0].source_type, item[0].source_id))
+        return ranked
+
+    def _apply_profile_bias_to_ranked_chunks(self, ranked_chunks, profile_snapshot):
+        adjusted = []
+        for chunk, score in ranked_chunks:
+            adjusted.append((chunk, score + self._profile_bias(chunk, profile_snapshot or {})))
+        adjusted.sort(key=lambda item: (-item[1], item[0].source_type, item[0].source_id))
+        return adjusted
+
+    def _build_graph_context(self, *, message, user_id=None, session_id=None):
+        context = []
+        for row in self.interaction_client.fetch_user_interest(user_id=user_id, session_id=session_id, limit=2):
+            context.append(
+                {
+                    "type": "user_interest",
+                    "label": row.get("category_name") or f"Category {row.get('category_id')}",
+                    "score": row.get("total_weight", 0),
+                }
+            )
+        for row in self.interaction_client.fetch_query_paths(query_text=message, limit=2):
+            context.append(
+                {
+                    "type": "query_path",
+                    "label": row.get("product_name") or f"Product {row.get('product_id')}",
+                    "score": row.get("total_weight", 0),
+                }
+            )
+        return context[:4]
+
+    def _build_profile_snapshot(self, products, *, user_id=None, session_id=None):
+        events = self.interaction_client.fetch_events(user_id=user_id, session_id=session_id, limit=20)
+        interest_rows = self.interaction_client.fetch_user_interest(user_id=user_id, session_id=session_id, limit=3)
+        return build_profile_snapshot(products, events, interest_rows)
+
+    def _generate_grounded_answer(self, message, retrieval):
+        prompt = self._build_prompt(message, retrieval)
+        generated = self.openai_client.generate_answer(prompt=prompt, question=message)
+        if generated:
+            return generated
+        return self._fallback_answer(retrieval)
+
+    def _build_prompt(self, message, retrieval):
+        source_lines = []
+        for index, source in enumerate(retrieval["sources"], start=1):
+            source_lines.append(
+                f"[{index}] {source['title']} ({source['source_type']}): {source['excerpt']}"
+            )
+        graph_lines = []
+        for row in retrieval["graph_context"]:
+            graph_lines.append(f"- {row['type']}: {row['label']} (score={row['score']})")
+
+        return (
+            "You are an e-commerce assistant. Use only the provided context. "
+            "Do not invent current price, stock, or order status unless it came from realtime API data. "
+            "If the context is insufficient, say so clearly. Keep the answer concise and factual.\n\n"
+            f"Question: {message}\n\n"
+            "Retrieved context:\n"
+            + ("\n".join(source_lines) if source_lines else "No retrieved context.")
+            + "\n\nGraph context:\n"
+            + ("\n".join(graph_lines) if graph_lines else "No graph context.")
+        )
+
+    def _fallback_answer(self, retrieval):
+        if not retrieval["sources"]:
+            return "I could not find enough grounded context to answer reliably. Try asking with a product name, product_id, or a more specific policy question."
+
+        lead = retrieval["sources"][0]
+        answer_parts = [f"Based on `{lead['title']}`, {lead['excerpt']}"]
+        if len(retrieval["sources"]) > 1:
+            answer_parts.append(f"Related context also appears in `{retrieval['sources'][1]['title']}`.")
+        if retrieval["graph_context"]:
+            answer_parts.append(f"Recent graph context suggests interest around {retrieval['graph_context'][0]['label']}.")
+        return " ".join(answer_parts)
+
+    def _resolve_product(self, products, *, explicit_product_id=None, message=""):
+        if explicit_product_id is not None:
+            for product in products:
+                if int(product["id"]) == int(explicit_product_id):
+                    return product
+            return None
+
+        lowered = message.lower()
+        best = None
+        best_score = 0
+        for product in products:
+            name = (product.get("name") or "").lower()
+            if not name:
+                continue
+            score = sum(1 for token in self._tokens(name) if token in lowered)
+            if name in lowered:
+                score += 5
+            if score > best_score:
+                best = product
+                best_score = score
+        return best if best_score > 0 else None
+
+    def _chunk_to_source(self, chunk, score):
+        excerpt = chunk.text.strip().replace("\n", " ")
+        excerpt = excerpt[:220] + ("..." if len(excerpt) > 220 else "")
+        return {
+            "source_type": chunk.source_type,
+            "source_id": chunk.source_id,
+            "title": chunk.title,
+            "excerpt": excerpt,
+            "product_id": chunk.product_id,
+            "score": round(float(score), 3),
+        }
+
+    def _profile_bias(self, chunk, profile_snapshot):
+        if not profile_snapshot:
+            return 0.0
+
+        bias = 0.0
+        top_category_ids = {
+            row.get("category_id")
+            for row in profile_snapshot.get("top_categories", [])
+            if row.get("category_id") is not None
+        }
+        top_brand_ids = {
+            row.get("brand_id")
+            for row in profile_snapshot.get("top_brands", [])
+            if row.get("brand_id") is not None
+        }
+        recent_product_ids = set(profile_snapshot.get("recent_viewed_product_ids", []))
+        recent_query_tokens = self._tokens(" ".join(profile_snapshot.get("recent_queries", [])))
+
+        if chunk.product_id in recent_product_ids:
+            bias += 2.0
+        if chunk.category_id in top_category_ids:
+            bias += 1.2
+        if chunk.brand_id in top_brand_ids:
+            bias += 0.8
+        if recent_query_tokens and recent_query_tokens & self._tokens(chunk.text):
+            bias += 0.4
+        return bias
+
+    def _product_text(self, product):
+        fields = [
+            product.get("name") or "",
+            product.get("short_description") or "",
+            product.get("full_description") or product.get("description") or "",
+            f"category_id={product.get('category_id')}",
+            f"brand_id={product.get('brand_id')}",
+            f"price={product.get('base_price')}",
+            "in stock" if product.get("has_stock") else "out of stock",
+        ]
+        attributes = product.get("attributes") or {}
+        if attributes:
+            fields.append("attributes: " + ", ".join(f"{key}={value}" for key, value in sorted(attributes.items())))
+        tags = product.get("tags") or []
+        if tags:
+            fields.append("tags: " + ", ".join(tags))
+        return ". ".join(str(field) for field in fields if field not in {"", "None"})
+
+    def _split_text(self, text, max_chars=500):
+        normalized = "\n".join(line.strip() for line in text.splitlines() if line.strip())
+        if not normalized:
+            return []
+        if len(normalized) <= max_chars:
+            return [normalized]
+        chunks = []
+        start = 0
+        while start < len(normalized):
+            end = min(start + max_chars, len(normalized))
+            chunks.append(normalized[start:end])
+            start = end
+        return chunks
+
+    def _tokens(self, text):
+        return {token.lower() for token in TOKEN_PATTERN.findall(text.lower())}
+
+    def _contains_any(self, text, keywords):
+        return any(keyword in text for keyword in keywords)
+
+    def _is_order_status_question(self, text, *, order_id=None):
+        if order_id is not None:
+            return True
+        order_terms_present = "order" in text or "don hang" in text
+        if not order_terms_present:
+            return False
+        return any(term in text for term in ORDER_STATUS_TERMS)
+
+    def _cosine_similarity(self, left, right):
+        if not left or not right:
+            return 0.0
+        numerator = sum(a * b for a, b in zip(left, right))
+        left_norm = math.sqrt(sum(a * a for a in left))
+        right_norm = math.sqrt(sum(b * b for b in right))
+        if left_norm == 0 or right_norm == 0:
+            return 0.0
+        return numerator / (left_norm * right_norm)
