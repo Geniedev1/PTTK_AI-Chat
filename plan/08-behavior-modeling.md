@@ -4,6 +4,8 @@
 
 Reduced scope and refocused around core AI behavior loop.
 
+Role clarified as runtime bridge before deep-model and evaluation phases.
+
 ## Muc tieu
 
 Xay lop AI cot loi cua he thong theo dung flow:
@@ -11,6 +13,8 @@ Xay lop AI cot loi cua he thong theo dung flow:
 `theo doi hanh vi -> tong hop behavioral profile -> dung profile cho recommend va chat`
 
 Plan nay khong dat trong tam vao research model. Trong tam la bien interaction data thanh behavioral profile co the dung that trong runtime.
+
+Plan nay duoc xem la phase bridge: dong bo behavioral context cho recommendation va chat, de cac phase sau (Plan 11-13) tap trung vao deep model, evaluation, va defense readiness.
 
 ## Yeu cau cot loi ma plan nay phai dap ung
 
@@ -51,6 +55,7 @@ Neu chua dung duoc behavioral profile cho ca `recommend` va `chat` thi Plan 08 c
 - khong lam multi-model stack
 - khong lam heavy training pipeline
 - khong lam full MLOps hay model registry
+- khong danh gia ablation/day du benchmark rubric
 
 ## Vai tro cua Plan 08 trong he thong
 
@@ -245,6 +250,14 @@ Khong bat buoc:
 - embedding API rieng
 - evaluation API rieng
 
+## Lien ket voi cac plan tiep theo
+
+Sau khi Plan 08 dat DoD, roadmap mo rong se tiep tuc theo thu tu:
+
+- Plan 11: deep model MVP + runtime ranking integration
+- Plan 12: evaluation, ablation, benchmark, metric report
+- Plan 13: defense demo readiness va rubric-evidence pack
+
 ## Deliverable
 
 - behavioral profile schema
@@ -282,7 +295,7 @@ Khong bat buoc:
 
 ## Phan de sau
 
-Nhung muc sau de sau Plan 08 nay:
+Nhung muc sau de sau Plan 08 va Plan 11-13:
 
 - learned user embedding
 - learned product embedding

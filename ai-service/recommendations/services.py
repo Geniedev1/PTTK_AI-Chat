@@ -1,6 +1,7 @@
 import logging
 from collections import Counter
 from copy import deepcopy
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 
 import requests
@@ -9,6 +10,21 @@ from django.conf import settings
 from .profile_utils import BehavioralProfileBuilder
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_iso_timestamp(value):
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 class ServiceClientError(Exception):
@@ -71,6 +87,58 @@ class InteractionAnalyticsClient:
         if session_id:
             params["session_id"] = session_id
         return self._get_optional("/api/interactions/events", params=params, default=[])
+
+    def fetch_all_events(self, *, limit=200, date_from=None, date_to=None):
+        target = max(1, int(limit))
+        page_limit = min(target, 200)
+        collected = []
+        seen_event_ids = set()
+        cursor_date_to = date_to
+        max_pages = max(3, (target // max(1, page_limit)) + 5)
+
+        for _ in range(max_pages):
+            params = {"limit": page_limit}
+            if date_from:
+                params["date_from"] = date_from
+            if cursor_date_to:
+                params["date_to"] = cursor_date_to
+
+            page = self._get_optional("/api/interactions/events", params=params, default=[])
+            if not page:
+                break
+
+            added_in_page = 0
+            for event in page:
+                event_id = event.get("id")
+                if event_id is not None and event_id in seen_event_ids:
+                    continue
+                if event_id is not None:
+                    seen_event_ids.add(event_id)
+                collected.append(event)
+                added_in_page += 1
+                if len(collected) >= target:
+                    return collected[:target]
+
+            # No progress means we cannot page further with current API constraints.
+            if added_in_page == 0:
+                break
+
+            oldest_ts = None
+            for event in page:
+                parsed_ts = _parse_iso_timestamp(event.get("timestamp"))
+                if parsed_ts is None:
+                    continue
+                if oldest_ts is None or parsed_ts < oldest_ts:
+                    oldest_ts = parsed_ts
+            if oldest_ts is None:
+                break
+
+            cursor_date_to = (oldest_ts - timedelta(microseconds=1)).isoformat().replace("+00:00", "Z")
+
+            if len(page) < page_limit:
+                break
+
+        return collected[:target]
 
     def fetch_product_gaps(self):
         return self._get_optional("/api/interactions/events/product_gaps", default=[])

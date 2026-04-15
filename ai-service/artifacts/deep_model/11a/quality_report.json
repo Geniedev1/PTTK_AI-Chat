@@ -1,0 +1,30 @@
+{
+  "actor_count": 5,
+  "class_balance": {
+    "binary_positive_count": 5,
+    "binary_positive_rate": 0.7143,
+    "weak_negative_count": 2,
+    "weak_negative_rate": 0.2857
+  },
+  "duplicate_row_count": 0,
+  "leakage_check": {
+    "label_before_snapshot_count": 0,
+    "passed": true
+  },
+  "minimum_split_size": 1,
+  "null_ratio": {
+    "actor_key": 0.0,
+    "item_brand_id": 0.0,
+    "item_category_id": 0.0,
+    "item_price_band": 0.0,
+    "product_id": 0.0,
+    "snapshot_time": 0.0
+  },
+  "product_count": 5,
+  "record_count": 7,
+  "split_counts": {
+    "test": 1,
+    "train": 4,
+    "valid": 2
+  }
+}

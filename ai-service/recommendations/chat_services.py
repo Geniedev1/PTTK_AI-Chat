@@ -270,12 +270,13 @@ class ChatbotService:
 
     def chat(self, *, message, user_id=None, session_id=None, customer_id=None, product_id=None, order_id=None):
         normalized_message = message.strip()
-        self.interaction_client.emit_chat_event(
-            event_type="chat_message_sent",
+        self._emit_chat_lifecycle_events(
             message=normalized_message,
             user_id=user_id,
             session_id=session_id,
-            metadata={"customer_id": customer_id, "product_id": product_id, "order_id": order_id},
+            customer_id=customer_id,
+            product_id=product_id,
+            order_id=order_id,
         )
 
         realtime = self._route_realtime(
@@ -305,6 +306,34 @@ class ChatbotService:
             "retrieval_mode": retrieval["retrieval_mode"],
             "profile_snapshot": retrieval["profile_snapshot"],
         }
+
+    def _emit_chat_lifecycle_events(self, *, message, user_id=None, session_id=None, customer_id=None, product_id=None, order_id=None):
+        # Interaction service requires at least one identity scope.
+        if user_id is None and not session_id:
+            return
+
+        metadata = {"customer_id": customer_id, "product_id": product_id, "order_id": order_id}
+        history = self.interaction_client.fetch_events(user_id=user_id, session_id=session_id, limit=20)
+        has_chat_history = any(
+            row.get("event_type") in {"chat_started", "chat_message_sent"}
+            for row in history
+        )
+        if not has_chat_history:
+            self.interaction_client.emit_chat_event(
+                event_type="chat_started",
+                message=message,
+                user_id=user_id,
+                session_id=session_id,
+                metadata=metadata,
+            )
+
+        self.interaction_client.emit_chat_event(
+            event_type="chat_message_sent",
+            message=message,
+            user_id=user_id,
+            session_id=session_id,
+            metadata=metadata,
+        )
 
     def retrieve(self, *, message, user_id=None, session_id=None, product_id=None, limit=5):
         products = self.product_client.fetch_products()

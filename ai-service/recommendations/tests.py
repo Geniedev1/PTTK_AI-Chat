@@ -1,15 +1,23 @@
 from pathlib import Path
+from io import StringIO
+import json
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
+from django.core.management import call_command
 from django.test import TestCase, override_settings
 from django.http import HttpResponse
 from django.test import RequestFactory
+from django.core.management.base import CommandError
 from rest_framework.test import APIRequestFactory
 
 from ai_service.middleware import RequestContextMiddleware
 
 from .chat_services import ChatbotService
+from .deep_dataset import build_dataset_records, build_quality_report, split_samples_by_actor_time
+from .deep_model_training import load_jsonl
 from .chat_views import ChatViewSet
-from .services import RecommendationService
+from .services import InteractionAnalyticsClient, RecommendationService
 from .views import ModelStatusViewSet, ProfileViewSet, RecommendationViewSet
 
 
@@ -377,6 +385,17 @@ class ChatbotServiceTest(TestCase):
         self.assertEqual(payload["profile_snapshot"]["recent_chat_cues"], ["i need a quiet keyboard"])
         self.assertGreater(payload["profile_snapshot"]["purchase_intent_score"], 0)
 
+    def test_chat_emits_chat_started_for_new_scope(self):
+        self.service.chat(message="Need keyboard recommendations", user_id=999)
+
+        event_types = [event["event_type"] for event in self.interaction_client.emitted_events]
+        self.assertEqual(event_types[:2], ["chat_started", "chat_message_sent"])
+
+    def test_chat_does_not_emit_events_without_scope(self):
+        self.service.chat(message="Need keyboard recommendations")
+
+        self.assertEqual(self.interaction_client.emitted_events, [])
+
 
 @override_settings(KNOWLEDGE_BASE_DIR=KNOWLEDGE_BASE_DIR)
 class ChatViewTest(TestCase):
@@ -440,3 +459,408 @@ class RequestContextMiddlewareTest(TestCase):
 
         self.assertEqual(request.request_id, "req-abc")
         self.assertEqual(response["X-Request-ID"], "req-abc")
+
+
+class BuildBehaviorProfileCommandTest(TestCase):
+    def test_command_requires_actor_scope(self):
+        with self.assertRaises(CommandError):
+            call_command("build_behavior_profile")
+
+    def test_command_outputs_profile_snapshot_json(self):
+        class StubService:
+            def get_profile_snapshot(self, *, user_id=None, session_id=None):
+                return {
+                    "user_id": user_id,
+                    "session_id": session_id,
+                    "profile_snapshot": {
+                        "scope_type": "session" if session_id else "user",
+                        "purchase_intent_score": 0.42,
+                    },
+                }
+
+        output = StringIO()
+        with patch(
+            "recommendations.management.commands.build_behavior_profile.Command.service_class",
+            StubService,
+        ):
+            call_command(
+                "build_behavior_profile",
+                "--session-id",
+                "sess-command",
+                "--pretty",
+                stdout=output,
+            )
+
+        payload = json.loads(output.getvalue())
+        self.assertEqual(payload["session_id"], "sess-command")
+        self.assertEqual(payload["profile_snapshot"]["scope_type"], "session")
+
+
+class DeepDatasetBuilderTest(TestCase):
+    def _products(self):
+        return [
+            {
+                "id": 1,
+                "category_id": 10,
+                "brand_id": 200,
+                "product_type_id": 100,
+                "base_price": "99.00",
+                "has_stock": True,
+                "is_active": True,
+            },
+            {
+                "id": 2,
+                "category_id": 11,
+                "brand_id": 201,
+                "product_type_id": 101,
+                "base_price": "59.00",
+                "has_stock": True,
+                "is_active": True,
+            },
+        ]
+
+    def _events(self):
+        return [
+            {
+                "event_type": "product_viewed",
+                "user_id": 7,
+                "product_id": 1,
+                "timestamp": "2026-04-01T10:00:00Z",
+                "signal_weight": 1,
+            },
+            {
+                "event_type": "cart_item_added",
+                "user_id": 7,
+                "product_id": 1,
+                "timestamp": "2026-04-02T10:00:00Z",
+                "signal_weight": 4,
+            },
+            {
+                "event_type": "product_viewed",
+                "user_id": 7,
+                "product_id": 2,
+                "timestamp": "2026-04-03T10:00:00Z",
+                "signal_weight": 1,
+            },
+            {
+                "event_type": "product_clicked",
+                "user_id": 7,
+                "product_id": 2,
+                "timestamp": "2026-04-03T12:00:00Z",
+                "signal_weight": 2,
+            },
+            {
+                "event_type": "product_viewed",
+                "session_id": "sess-a",
+                "product_id": 2,
+                "timestamp": "2026-04-04T09:00:00Z",
+                "signal_weight": 1,
+            },
+            {
+                "event_type": "product_clicked",
+                "session_id": "sess-a",
+                "product_id": 2,
+                "timestamp": "2026-04-05T09:00:00Z",
+                "signal_weight": 2,
+            },
+        ]
+
+    def test_build_dataset_records_generates_labels(self):
+        records = build_dataset_records(self._events(), self._products(), label_window_days=14)
+
+        self.assertEqual(len(records), 3)
+        pair_map = {(row["actor_key"], row["product_id"]): row for row in records}
+
+        converted = pair_map[("user:7", 1)]
+        weak_negative = pair_map[("user:7", 2)]
+
+        self.assertEqual(converted["binary_label"], 1)
+        self.assertGreaterEqual(converted["weighted_label"], 0.7)
+        self.assertEqual(weak_negative["binary_label"], 0)
+        self.assertEqual(weak_negative["weak_negative"], 1)
+        self.assertIn("actor_purchase_intent_pre", converted)
+        self.assertIn("item_popularity_pre", converted)
+
+    def test_split_and_quality_report(self):
+        records = build_dataset_records(self._events(), self._products(), label_window_days=14)
+        splits, _ = split_samples_by_actor_time(records, train_ratio=0.6, valid_ratio=0.2)
+        report = build_quality_report(records, splits)
+
+        self.assertEqual(sum(len(rows) for rows in splits.values()), len(records))
+        self.assertTrue(report["leakage_check"]["passed"])
+        self.assertGreaterEqual(report["record_count"], 3)
+
+
+class BuildRankingDatasetCommandTest(TestCase):
+    def test_command_writes_dataset_outputs(self):
+        events = [
+            {
+                "event_type": "product_viewed",
+                "user_id": 7,
+                "product_id": 1,
+                "timestamp": "2026-04-01T10:00:00Z",
+                "signal_weight": 1,
+            },
+            {
+                "event_type": "cart_item_added",
+                "user_id": 7,
+                "product_id": 1,
+                "timestamp": "2026-04-02T10:00:00Z",
+                "signal_weight": 4,
+            },
+            {
+                "event_type": "product_viewed",
+                "session_id": "sess-a",
+                "product_id": 2,
+                "timestamp": "2026-04-04T09:00:00Z",
+                "signal_weight": 1,
+            },
+        ]
+        products = [
+            {"id": 1, "category_id": 10, "brand_id": 200, "product_type_id": 100, "base_price": "99.00", "has_stock": True, "is_active": True},
+            {"id": 2, "category_id": 11, "brand_id": 201, "product_type_id": 101, "base_price": "59.00", "has_stock": True, "is_active": True},
+        ]
+
+        class StubProductClient:
+            def fetch_products(self):
+                return products
+
+        class StubInteractionClient:
+            def fetch_all_events(self, *, limit=200, date_from=None, date_to=None):
+                return events
+
+        with TemporaryDirectory() as tmp_dir:
+            with patch(
+                "recommendations.management.commands.build_ranking_dataset.Command.product_client_class",
+                StubProductClient,
+            ), patch(
+                "recommendations.management.commands.build_ranking_dataset.Command.interaction_client_class",
+                StubInteractionClient,
+            ):
+                call_command("build_ranking_dataset", "--output-dir", tmp_dir)
+
+            self.assertTrue((Path(tmp_dir) / "dataset_train.jsonl").exists())
+            self.assertTrue((Path(tmp_dir) / "dataset_valid.jsonl").exists())
+            self.assertTrue((Path(tmp_dir) / "dataset_test.jsonl").exists())
+            self.assertTrue((Path(tmp_dir) / "protocol.json").exists())
+            self.assertTrue((Path(tmp_dir) / "quality_report.json").exists())
+
+
+class InteractionAnalyticsClientPaginationTest(TestCase):
+    def test_fetch_all_events_pages_until_limit(self):
+        first_page = [
+            {
+                "id": 1000 - idx,
+                "timestamp": "2026-04-03T10:00:00Z",
+                "event_type": "product_viewed",
+            }
+            for idx in range(200)
+        ]
+        second_page = [
+            {"id": 777, "timestamp": "2026-04-01T10:00:00Z", "event_type": "cart_item_added"},
+        ]
+        pages = [first_page, second_page]
+
+        class FakeClient(InteractionAnalyticsClient):
+            def __init__(self):
+                self.calls = []
+
+            def _get_optional(self, path, params=None, default=None):
+                self.calls.append({"path": path, "params": dict(params or {})})
+                index = len(self.calls) - 1
+                if index < len(pages):
+                    return pages[index]
+                return []
+
+        client = FakeClient()
+        rows = client.fetch_all_events(limit=201)
+
+        self.assertEqual(len(rows), 201)
+        self.assertEqual(rows[0]["id"], 1000)
+        self.assertEqual(rows[-1]["id"], 777)
+        self.assertEqual(len(client.calls), 2)
+        self.assertEqual(client.calls[0]["params"]["limit"], 200)
+        self.assertIn("date_to", client.calls[1]["params"])
+
+    def test_fetch_all_events_respects_requested_limit(self):
+        class FakeClient(InteractionAnalyticsClient):
+            def __init__(self):
+                self.calls = []
+
+            def _get_optional(self, path, params=None, default=None):
+                self.calls.append({"path": path, "params": dict(params or {})})
+                return [
+                    {"id": 10, "timestamp": "2026-04-03T10:00:00Z", "event_type": "product_viewed"},
+                    {"id": 9, "timestamp": "2026-04-02T10:00:00Z", "event_type": "product_clicked"},
+                ]
+
+        client = FakeClient()
+        rows = client.fetch_all_events(limit=1)
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["id"], 10)
+        self.assertEqual(client.calls[0]["params"]["limit"], 1)
+
+
+class TrainRankingModelCommandTest(TestCase):
+    def _row(self, *, actor_key, scope_type, product_id, snapshot_time, binary_label, weighted_label):
+        return {
+            "sample_id": "%s|%s|%s" % (actor_key, product_id, snapshot_time),
+            "actor_key": actor_key,
+            "scope_type": scope_type,
+            "product_id": product_id,
+            "snapshot_time": snapshot_time,
+            "feature_cutoff_time": snapshot_time,
+            "item_category_id": 10 if product_id % 2 else 11,
+            "item_brand_id": 200 if product_id % 2 else 201,
+            "item_product_type_id": 100,
+            "item_price_band": "mid" if product_id % 2 else "budget",
+            "item_has_stock": 1,
+            "item_is_active": 1,
+            "actor_top_category_id": 10,
+            "actor_top_brand_id": 200,
+            "actor_purchase_intent_pre": 0.6 if binary_label else 0.2,
+            "actor_event_count_1d": 1,
+            "actor_event_count_7d": 3,
+            "actor_event_count_30d": 6,
+            "actor_view_count_7d": 2,
+            "actor_click_count_7d": 1,
+            "actor_cart_count_7d": 1 if binary_label else 0,
+            "actor_purchase_count_30d": 1 if binary_label else 0,
+            "actor_item_event_count_30d": 2,
+            "item_popularity_pre": 1.5,
+            "interaction_overlap_pre": 1.0,
+            "graph_neighbor_score_pre": 0.0,
+            "binary_label": binary_label,
+            "weighted_label": weighted_label,
+            "weak_negative": 0 if binary_label else 1,
+            "label_event_type": "order_paid" if binary_label else "product_clicked",
+            "label_timestamp": snapshot_time,
+            "label_window_end": "2026-04-20T00:00:00Z",
+            "split": "train",
+        }
+
+    def _write_jsonl(self, path, rows):
+        with path.open("w", encoding="utf-8") as handle:
+            for row in rows:
+                handle.write(json.dumps(row, ensure_ascii=True, sort_keys=True))
+                handle.write("\n")
+
+    def test_train_ranking_model_writes_artifacts(self):
+        with TemporaryDirectory() as tmp_dir:
+            dataset_dir = Path(tmp_dir) / "11a"
+            output_dir = Path(tmp_dir) / "11b"
+            dataset_dir.mkdir(parents=True, exist_ok=True)
+
+            train_rows = [
+                self._row(
+                    actor_key="user:1",
+                    scope_type="user",
+                    product_id=1,
+                    snapshot_time="2026-04-01T10:00:00Z",
+                    binary_label=1,
+                    weighted_label=1.0,
+                ),
+                self._row(
+                    actor_key="user:2",
+                    scope_type="user",
+                    product_id=2,
+                    snapshot_time="2026-04-01T11:00:00Z",
+                    binary_label=0,
+                    weighted_label=0.4,
+                ),
+                self._row(
+                    actor_key="session:s-3",
+                    scope_type="session",
+                    product_id=3,
+                    snapshot_time="2026-04-02T09:00:00Z",
+                    binary_label=1,
+                    weighted_label=1.0,
+                ),
+                self._row(
+                    actor_key="session:s-4",
+                    scope_type="session",
+                    product_id=4,
+                    snapshot_time="2026-04-02T10:00:00Z",
+                    binary_label=0,
+                    weighted_label=0.2,
+                ),
+            ]
+            valid_rows = [
+                self._row(
+                    actor_key="user:5",
+                    scope_type="user",
+                    product_id=5,
+                    snapshot_time="2026-04-03T10:00:00Z",
+                    binary_label=1,
+                    weighted_label=1.0,
+                )
+            ]
+            test_rows = [
+                self._row(
+                    actor_key="session:s-6",
+                    scope_type="session",
+                    product_id=6,
+                    snapshot_time="2026-04-03T11:00:00Z",
+                    binary_label=0,
+                    weighted_label=0.4,
+                )
+            ]
+
+            self._write_jsonl(dataset_dir / "dataset_train.jsonl", train_rows)
+            self._write_jsonl(dataset_dir / "dataset_valid.jsonl", valid_rows)
+            self._write_jsonl(dataset_dir / "dataset_test.jsonl", test_rows)
+            (dataset_dir / "protocol.json").write_text(
+                json.dumps(
+                    {
+                        "plan": "11A",
+                        "feature_version": "plan11a-v1",
+                        "record_count": len(train_rows) + len(valid_rows) + len(test_rows),
+                    },
+                    ensure_ascii=True,
+                    indent=2,
+                    sort_keys=True,
+                ),
+                encoding="utf-8",
+            )
+
+            call_command(
+                "train_ranking_model",
+                "--dataset-dir",
+                str(dataset_dir),
+                "--output-dir",
+                str(output_dir),
+                "--epochs",
+                "8",
+                "--patience",
+                "4",
+                "--batch-size",
+                "2",
+                "--hidden-dims",
+                "8,4",
+            )
+
+            self.assertTrue((output_dir / "model_weights.npz").exists())
+            self.assertTrue((output_dir / "preprocessing_config.json").exists())
+            self.assertTrue((output_dir / "training_config.json").exists())
+            self.assertTrue((output_dir / "metrics_report.json").exists())
+            self.assertTrue((output_dir / "model_metadata.json").exists())
+            self.assertTrue((output_dir / "artifact_checksum.sha256").exists())
+
+            metrics = json.loads((output_dir / "metrics_report.json").read_text(encoding="utf-8"))
+            self.assertIn("auc", metrics["test"])
+            self.assertIn("f1", metrics["test"])
+            self.assertIn("recall_at_10", metrics["test"])
+
+    def test_train_ranking_model_requires_non_empty_split_files(self):
+        with TemporaryDirectory() as tmp_dir:
+            dataset_dir = Path(tmp_dir) / "11a"
+            dataset_dir.mkdir(parents=True, exist_ok=True)
+            (dataset_dir / "dataset_train.jsonl").write_text("", encoding="utf-8")
+            (dataset_dir / "dataset_valid.jsonl").write_text("", encoding="utf-8")
+            (dataset_dir / "dataset_test.jsonl").write_text("", encoding="utf-8")
+
+            with self.assertRaises(CommandError):
+                call_command("train_ranking_model", "--dataset-dir", str(dataset_dir))
+
+            self.assertEqual(load_jsonl(dataset_dir / "dataset_train.jsonl"), [])
