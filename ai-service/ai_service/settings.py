@@ -59,6 +59,13 @@ INTERNAL_ADMIN_KEY = os.getenv("INTERNAL_ADMIN_KEY", "change-this-in-dev")
 REQUEST_TIMEOUT_SECONDS = float(os.getenv("REQUEST_TIMEOUT_SECONDS", "10"))
 RECOMMENDATION_LIMIT_DEFAULT = int(os.getenv("RECOMMENDATION_LIMIT_DEFAULT", "10"))
 RECOMMENDATION_LIMIT_MAX = int(os.getenv("RECOMMENDATION_LIMIT_MAX", "20"))
+DEEP_MODEL_ENABLED = os.getenv("DEEP_MODEL_ENABLED", "true").lower() == "true"
+DEEP_MODEL_ARTIFACT_DIR = Path(
+    os.getenv("DEEP_MODEL_ARTIFACT_DIR", BASE_DIR / "artifacts" / "deep_model" / "11b")
+)
+DEEP_MODEL_SCORE_ALPHA = float(os.getenv("DEEP_MODEL_SCORE_ALPHA", "0.35"))
+DEEP_MODEL_SCORE_CLIP_MIN = float(os.getenv("DEEP_MODEL_SCORE_CLIP_MIN", "0.0"))
+DEEP_MODEL_SCORE_CLIP_MAX = float(os.getenv("DEEP_MODEL_SCORE_CLIP_MAX", "1.0"))
 CHAT_RETRIEVAL_LIMIT = int(os.getenv("CHAT_RETRIEVAL_LIMIT", "5"))
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")

@@ -149,6 +149,56 @@ class StubOrderClient:
         return None
 
 
+class StubDeepModelRuntime:
+    alpha = 0.5
+
+    def __init__(self, *, enabled=True, loaded=True, scores=None, fallback_mode="deep-model"):
+        self._enabled = enabled
+        self._loaded = loaded
+        self._scores = scores or []
+        self._fallback_mode = fallback_mode
+
+    def status(self):
+        return {
+            "enabled": self._enabled,
+            "loaded": self._loaded,
+            "model_version": "plan11b-mlp-v1",
+            "artifact_dir": "/tmp/11b",
+            "alpha": self.alpha,
+            "score_clip": {"min": 0.0, "max": 1.0},
+            "fallback_mode": self._fallback_mode,
+            "error": None if self._loaded else "model unavailable",
+        }
+
+    def score_candidates(self, feature_rows):
+        if not self._enabled:
+            return {
+                "applied": False,
+                "scores": [],
+                "model_version": "plan11b-mlp-v1",
+                "fallback_mode": "heuristic-only-disabled",
+                "error": None,
+            }
+        if not self._loaded:
+            return {
+                "applied": False,
+                "scores": [],
+                "model_version": "plan11b-mlp-v1",
+                "fallback_mode": "heuristic-only-model-unavailable",
+                "error": "model unavailable",
+            }
+        scores = list(self._scores[: len(feature_rows)])
+        while len(scores) < len(feature_rows):
+            scores.append(0.0)
+        return {
+            "applied": True,
+            "scores": scores,
+            "model_version": "plan11b-mlp-v1",
+            "fallback_mode": "deep-model",
+            "error": None,
+        }
+
+
 class StubInteractionContextClient:
     def __init__(self):
         self.emitted_events = []
@@ -233,6 +283,37 @@ class RecommendationServiceTest(TestCase):
         self.assertNotIn(4, cart_ids)
         self.assertEqual(cart_payload["items"][0]["product"]["id"], 2)
         self.assertEqual(fallback_payload["context"]["strategy"], "cart-fallback-home")
+
+    def test_home_recommendation_applies_deep_model_score_when_loaded(self):
+        service = RecommendationService(
+            product_client=StubProductClient(),
+            interaction_client=StubInteractionClient(),
+            cart_client=StubCartClient(),
+            deep_model_runtime=StubDeepModelRuntime(scores=[0.1, 0.95, 0.2, 0.05]),
+        )
+
+        payload = service.recommend_home(user_id=77, session_id="sess-1", limit=3)
+
+        self.assertEqual(payload["context"]["deep_model"]["fallback_mode"], "deep-model")
+        self.assertTrue(payload["context"]["deep_model"]["applied"])
+        self.assertEqual(payload["items"][0]["product"]["id"], 2)
+        self.assertIn("deep_model", payload["items"][0]["reason_codes"])
+        self.assertIsNotNone(payload["items"][0]["deep_model_score"])
+        self.assertIn("deep_model_bonus", payload["items"][0]["source_signals"])
+
+    def test_home_recommendation_falls_back_when_deep_model_unavailable(self):
+        service = RecommendationService(
+            product_client=StubProductClient(),
+            interaction_client=StubInteractionClient(),
+            cart_client=StubCartClient(),
+            deep_model_runtime=StubDeepModelRuntime(enabled=True, loaded=False),
+        )
+
+        payload = service.recommend_home(user_id=77, session_id="sess-1", limit=2)
+
+        self.assertFalse(payload["context"]["deep_model"]["applied"])
+        self.assertEqual(payload["context"]["deep_model"]["fallback_mode"], "heuristic-only-model-unavailable")
+        self.assertNotIn("deep_model", payload["items"][0]["reason_codes"])
 
 
 @override_settings(RECOMMENDATION_LIMIT_DEFAULT=10, RECOMMENDATION_LIMIT_MAX=20)
@@ -322,7 +403,12 @@ class RecommendationViewTest(TestCase):
         self.assertGreater(response.data["profile_snapshot"]["purchase_intent_score"], 0)
 
     def test_model_status_endpoint_reports_behavioral_profile_runtime(self):
-        service = self._service()
+        service = RecommendationService(
+            product_client=StubProductClient(),
+            interaction_client=StubInteractionClient(),
+            cart_client=StubCartClient(),
+            deep_model_runtime=StubDeepModelRuntime(),
+        )
 
         class StubbedModelStatusViewSet(ModelStatusViewSet):
             service_class = lambda self: service  # type: ignore[assignment]
@@ -333,6 +419,9 @@ class RecommendationViewTest(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.data["behavioral_profile_enabled"])
+        self.assertEqual(response.data["scoring_mode"], "hybrid-deep-heuristic")
+        self.assertTrue(response.data["deep_model"]["loaded"])
+        self.assertEqual(response.data["deep_model"]["model_version"], "plan11b-mlp-v1")
         self.assertTrue(response.data["integrations"]["chat"]["prompt_context"])
         self.assertIn("purchase_intent_score", response.data["profile_fields"])
 

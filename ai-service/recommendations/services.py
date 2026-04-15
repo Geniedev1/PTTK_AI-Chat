@@ -7,6 +7,7 @@ from decimal import Decimal, InvalidOperation
 import requests
 from django.conf import settings
 
+from .deep_model_inference import DeepModelRuntime
 from .profile_utils import BehavioralProfileBuilder
 
 logger = logging.getLogger(__name__)
@@ -193,7 +194,14 @@ class CartClient:
 
 
 class RecommendationService:
-    def __init__(self, product_client=None, interaction_client=None, cart_client=None, profile_builder=None):
+    def __init__(
+        self,
+        product_client=None,
+        interaction_client=None,
+        cart_client=None,
+        profile_builder=None,
+        deep_model_runtime=None,
+    ):
         self.product_client = product_client or ProductCatalogClient()
         self.interaction_client = interaction_client or InteractionAnalyticsClient()
         self.cart_client = cart_client or CartClient()
@@ -201,6 +209,7 @@ class RecommendationService:
             interaction_client=self.interaction_client,
             cart_client=self.cart_client,
         )
+        self.deep_model_runtime = deep_model_runtime or DeepModelRuntime()
 
     def recommend_home(self, *, user_id=None, session_id=None, limit=10):
         products = self._load_products()
@@ -209,6 +218,7 @@ class RecommendationService:
 
         actor_context = self._build_actor_context(products, user_id=user_id, session_id=session_id)
         self._apply_actor_context(score_cards, products, actor_context)
+        deep_model_meta = self._apply_deep_model_scores(score_cards, products, actor_context)
 
         items = self._rank(products, score_cards, limit=limit)
         return {
@@ -218,6 +228,7 @@ class RecommendationService:
                 "session_id": session_id,
                 "recent_product_ids": actor_context["recent_product_ids"],
                 "profile_snapshot": actor_context["profile_snapshot"],
+                "deep_model": deep_model_meta,
             },
             "items": items,
         }
@@ -238,6 +249,7 @@ class RecommendationService:
 
         actor_context = self._build_actor_context(products, user_id=user_id, session_id=session_id)
         self._apply_actor_context(score_cards, products, actor_context)
+        deep_model_meta = self._apply_deep_model_scores(score_cards, products, actor_context)
 
         items = self._rank(products, score_cards, limit=limit, exclude_ids={int(product_id)})
         return {
@@ -247,6 +259,7 @@ class RecommendationService:
                 "user_id": user_id,
                 "session_id": session_id,
                 "profile_snapshot": actor_context["profile_snapshot"],
+                "deep_model": deep_model_meta,
             },
             "items": items,
         }
@@ -278,6 +291,7 @@ class RecommendationService:
             cart_payload=cart_payload,
         )
         self._apply_actor_context(score_cards, products, actor_context)
+        deep_model_meta = self._apply_deep_model_scores(score_cards, products, actor_context)
 
         items = self._rank(products, score_cards, limit=limit, exclude_ids=set(cart_product_ids))
         return {
@@ -287,6 +301,7 @@ class RecommendationService:
                 "user_id": user_id,
                 "cart_product_ids": cart_product_ids,
                 "profile_snapshot": actor_context["profile_snapshot"],
+                "deep_model": deep_model_meta,
             },
             "items": items,
         }
@@ -302,10 +317,20 @@ class RecommendationService:
 
     def get_model_status(self):
         status_payload = self.profile_builder.status()
+        deep_model_status = self.deep_model_runtime.status()
+        fallbacks = dict(status_payload.get("fallbacks", {}))
+        fallbacks["deep_model_unavailable"] = "heuristic-only"
+        status_payload["fallbacks"] = fallbacks
+        status_payload["deep_model"] = deep_model_status
+        if deep_model_status.get("enabled") and deep_model_status.get("loaded"):
+            status_payload["scoring_mode"] = "hybrid-deep-heuristic"
+        else:
+            status_payload["scoring_mode"] = "behavioral-heuristic"
         status_payload["runtime"] = {
             "recommendation_limit_default": getattr(settings, "RECOMMENDATION_LIMIT_DEFAULT", 10),
             "recommendation_limit_max": getattr(settings, "RECOMMENDATION_LIMIT_MAX", 20),
             "request_timeout_seconds": getattr(settings, "REQUEST_TIMEOUT_SECONDS", 10),
+            "deep_model_alpha": float(getattr(self.deep_model_runtime, "alpha", 0.0)),
         }
         return status_payload
 
@@ -324,6 +349,8 @@ class RecommendationService:
                 "score": 0.0,
                 "reason_codes": set(),
                 "source_signals": {},
+                "deep_model_score": None,
+                "deep_model_bonus": 0.0,
             }
             for product_id in products
         }
@@ -336,6 +363,10 @@ class RecommendationService:
                 "category_counter": Counter(),
                 "brand_counter": Counter(),
                 "price_points": [],
+                "events": [],
+                "event_counts": Counter(),
+                "actor_key": None,
+                "scope_type": "anonymous",
                 "recent_product_ids": [],
                 "profile_snapshot": self.profile_builder.empty(),
                 "scope_is_user": False,
@@ -349,7 +380,7 @@ class RecommendationService:
         price_points = []
 
         for event in events:
-            product_id = event.get("product_id")
+            product_id = self._normalize_product_id(event.get("product_id"))
             if product_id in products:
                 product = products[product_id]
                 signal_weight = max(float(event.get("signal_weight", 1) or 1), 1.0)
@@ -379,9 +410,132 @@ class RecommendationService:
             "category_counter": category_counter,
             "brand_counter": brand_counter,
             "price_points": price_points,
+            "events": events,
+            "event_counts": Counter(row.get("event_type") for row in events),
+            "actor_key": self._actor_key(user_id=user_id, session_id=session_id),
+            "scope_type": "user" if user_id is not None else "session",
             "recent_product_ids": recent_product_ids,
             "profile_snapshot": profile_snapshot,
             "scope_is_user": user_id is not None,
+        }
+
+    def _apply_deep_model_scores(self, score_cards, products, actor_context):
+        feature_rows = []
+        product_ids = []
+        for product_id, product in products.items():
+            if product_id not in score_cards:
+                continue
+            feature_rows.append(
+                self._build_deep_feature_row(
+                    product_id=product_id,
+                    product=product,
+                    score_cards=score_cards,
+                    actor_context=actor_context,
+                )
+            )
+            product_ids.append(product_id)
+
+        inference = self.deep_model_runtime.score_candidates(feature_rows)
+        alpha = float(getattr(self.deep_model_runtime, "alpha", 0.0))
+        if not inference.get("applied"):
+            return {
+                "enabled": bool(self.deep_model_runtime.status().get("enabled")),
+                "loaded": bool(self.deep_model_runtime.status().get("loaded")),
+                "applied": False,
+                "alpha": alpha,
+                "model_version": inference.get("model_version"),
+                "fallback_mode": inference.get("fallback_mode"),
+                "error": inference.get("error"),
+            }
+
+        scores = inference.get("scores") or []
+        for idx, product_id in enumerate(product_ids):
+            if idx >= len(scores):
+                break
+            deep_score = float(scores[idx])
+            deep_bonus = alpha * deep_score
+            card = score_cards.get(product_id)
+            if card is None:
+                continue
+            card["deep_model_score"] = deep_score
+            card["deep_model_bonus"] = deep_bonus
+            self._add_score(score_cards, product_id, deep_bonus, "deep_model", "deep_model_bonus")
+            card["source_signals"]["deep_model_score"] = deep_score
+
+        return {
+            "enabled": True,
+            "loaded": True,
+            "applied": True,
+            "alpha": alpha,
+            "model_version": inference.get("model_version"),
+            "fallback_mode": inference.get("fallback_mode", "deep-model"),
+            "error": None,
+        }
+
+    def _build_deep_feature_row(self, *, product_id, product, score_cards, actor_context):
+        profile_snapshot = actor_context.get("profile_snapshot") or {}
+        events = actor_context.get("events") or []
+        actor_item_events = [
+            row
+            for row in events
+            if self._normalize_product_id(row.get("product_id")) == int(product_id)
+        ]
+
+        top_categories = profile_snapshot.get("top_categories") or []
+        top_brands = profile_snapshot.get("top_brands") or []
+        top_category_id = top_categories[0].get("category_id") if top_categories else None
+        top_brand_id = top_brands[0].get("brand_id") if top_brands else None
+
+        card = score_cards.get(product_id) or {"source_signals": {}}
+        source_signals = card.get("source_signals") or {}
+        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+        def _count_events(event_types):
+            return int(sum(1 for row in events if row.get("event_type") in event_types))
+
+        def _count_item_events(event_types):
+            return int(sum(1 for row in actor_item_events if row.get("event_type") in event_types))
+
+        total_events = int(len(events))
+        return {
+            "sample_id": "%s|%s|%s" % (actor_context.get("actor_key") or "anonymous", product_id, now),
+            "actor_key": actor_context.get("actor_key") or "anonymous",
+            "scope_type": actor_context.get("scope_type") or "anonymous",
+            "product_id": int(product_id),
+            "snapshot_time": now,
+            "feature_cutoff_time": now,
+            "item_category_id": product.get("category_id"),
+            "item_brand_id": product.get("brand_id"),
+            "item_product_type_id": product.get("product_type_id"),
+            "item_price_band": self._price_band(product.get("base_price")),
+            "item_has_stock": int(bool(product.get("has_stock", False))),
+            "item_is_active": int(bool(product.get("is_active", False))),
+            "actor_top_category_id": top_category_id,
+            "actor_top_brand_id": top_brand_id,
+            "actor_purchase_intent_pre": float(profile_snapshot.get("purchase_intent_score", 0.0) or 0.0),
+            "actor_event_count_1d": total_events,
+            "actor_event_count_7d": total_events,
+            "actor_event_count_30d": total_events,
+            "actor_view_count_7d": _count_events({"product_viewed"}),
+            "actor_click_count_7d": _count_events({"product_clicked"}),
+            "actor_cart_count_7d": _count_events({"cart_item_added", "cart_item_quantity_updated"}),
+            "actor_purchase_count_30d": _count_events({"order_paid", "order_completed"}),
+            "actor_item_event_count_30d": int(len(actor_item_events)),
+            "item_popularity_pre": float(source_signals.get("popularity", 0.0) or 0.0),
+            "interaction_overlap_pre": _count_item_events(
+                {
+                    "product_viewed",
+                    "product_clicked",
+                    "cart_item_added",
+                    "order_paid",
+                    "order_completed",
+                }
+            ),
+            "graph_neighbor_score_pre": float(
+                (source_signals.get("graph_neighbor", 0.0) or 0.0)
+                + (source_signals.get("cart_graph", 0.0) or 0.0)
+            ),
+            "binary_label": 0,
         }
 
     def _apply_actor_context(self, score_cards, products, actor_context):
@@ -529,7 +683,13 @@ class RecommendationService:
                 continue
             if not product.get("has_stock", False):
                 continue
-            card = score_cards.get(product_id) or {"score": 0.0, "reason_codes": set(), "source_signals": {}}
+            card = score_cards.get(product_id) or {
+                "score": 0.0,
+                "reason_codes": set(),
+                "source_signals": {},
+                "deep_model_score": None,
+                "deep_model_bonus": 0.0,
+            }
             final_score = card["score"]
             if final_score <= 0:
                 final_score = 0.1
@@ -537,11 +697,18 @@ class RecommendationService:
                     "score": final_score,
                     "reason_codes": {"catalog_fallback"},
                     "source_signals": {"catalog_fallback": 0.1},
+                    "deep_model_score": card.get("deep_model_score"),
+                    "deep_model_bonus": card.get("deep_model_bonus", 0.0),
                 }
             ranked.append(
                 {
                     "product": self._serialize_product(product),
                     "score": round(final_score, 2),
+                    "deep_model_score": (
+                        round(float(card["deep_model_score"]), 4)
+                        if card.get("deep_model_score") is not None
+                        else None
+                    ),
                     "reason_codes": sorted(card["reason_codes"]),
                     "source_signals": {
                         key: round(float(value), 2)
@@ -695,6 +862,22 @@ class RecommendationService:
             return float(value)
         except (TypeError, ValueError):
             return 0.0
+
+    def _normalize_product_id(self, value):
+        try:
+            if value is None:
+                return None
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _actor_key(self, *, user_id=None, session_id=None):
+        if user_id is not None:
+            return "user:%s" % int(user_id)
+        session_text = str(session_id or "").strip()
+        if session_text:
+            return "session:%s" % session_text
+        return None
 
     def _price_band(self, value):
         amount = self._to_decimal(value)

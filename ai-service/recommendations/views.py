@@ -31,14 +31,18 @@ class RecommendationViewSet(viewsets.ViewSet):
 
     def _log_payload(self, request, endpoint, payload):
         items = payload.get("items", [])
+        deep_model = (payload.get("context") or {}).get("deep_model") or {}
         logger.info(
-            "ai_recommendation_result request_id=%s endpoint=%s user_id=%s session_id=%s item_count=%s top_product_ids=%s top_reason_codes=%s",
+            "ai_recommendation_result request_id=%s endpoint=%s user_id=%s session_id=%s item_count=%s model_version=%s fallback_mode=%s top_product_ids=%s top_deep_scores=%s top_reason_codes=%s",
             getattr(request, "request_id", "-"),
             endpoint,
             request.query_params.get("user_id"),
             request.query_params.get("session_id"),
             len(items),
+            deep_model.get("model_version"),
+            deep_model.get("fallback_mode"),
             [item["product"]["id"] for item in items[:3]],
+            [item.get("deep_model_score") for item in items[:3]],
             [item["reason_codes"] for item in items[:3]],
         )
 
