@@ -27,7 +27,8 @@ def gateway_health(request):
 
 def _resolve_backend_base(path):
     for prefix, base_url in settings.SERVICE_ROUTES.items():
-        if path.startswith(prefix):
+        normalized_prefix = prefix.rstrip("/")
+        if path == normalized_prefix or path.startswith(f"{normalized_prefix}/"):
             return base_url.rstrip("/")
     return None
 

@@ -28,6 +28,283 @@ Service prefixes:
 6. /api/interactions/
 7. /api/ai/
 
+Runtime alignment notes (verified 16 Apr 2026):
+- Gateway now supports both /api/orders and /api/orders/.
+- Order service supports both slash and no-slash prefix.
+- Frontend constants should prefer no-slash for order routes for consistency.
+- Right after docker-compose up, some services can be Up before app process listens; run preflight probes before FE smoke/E2E.
+
+## 3. Frontend Scope
+
+### 3.1 Customer App
+
+1. Authentication: register, login, profile view/update.
+2. Product discovery: categories, listing, filter/sort/search, detail, in-stock view.
+3. Cart and checkout: current cart, add/remove/update, clear cart, create order.
+4. Order tracking: scoped list/detail.
+5. AI layer: recommendation widgets (home/detail/cart), chat + sources panel, profile snapshot and model status.
+
+### 3.2 Staff/Admin App
+
+1. Staff login and profile.
+2. Product management CRUD + variant.
+3. Order status management.
+4. Interaction analytics dashboards.
+5. Graph status and graph rebuild tools.
+
+### 3.3 Global Chat Widget
+
+1. Fixed launcher on customer pages.
+2. Open/minimize/restore/close behavior.
+3. Bottom-right fixed position.
+4. Conversation state persists across routes.
+
+## 4. Recommended Tech Stack
+
+1. Vite + React + TypeScript.
+2. React Router.
+3. TanStack Query.
+4. Axios.
+5. Zod.
+6. Zustand.
+7. Consistent UI system (MUI or shadcn/ui + Tailwind).
+8. Testing: Vitest + RTL, Playwright smoke.
+
+## 5. Core Frontend Architecture
+
+```text
+frontend/
+  src/
+    app/
+      router/
+      providers/
+      layout/
+    modules/
+      auth/
+      catalog/
+      cart/
+      orders/
+      ai/
+      interactions/
+      staff/
+      chat-widget/
+    pages/
+      customer/
+      admin/
+    shared/
+      api/
+      schemas/
+      types/
+      components/
+      hooks/
+      stores/
+      utils/
+      constants/
+      styles/
+```
+
+Architecture rules:
+1. UI components do not call HTTP directly.
+2. API calls are in service adapters.
+3. Responses are validated by Zod.
+4. Route-level error boundary is required.
+
+## 6. API Integration Matrix
+
+### 6.1 Auth
+
+Customer:
+1. POST /api/customers/register/
+2. POST /api/customers/login/
+3. GET /api/customers/profile/
+4. PUT /api/customers/update_profile/
+
+Staff:
+1. POST /api/staff/login/
+2. GET /api/staff/me/
+3. POST /api/staff/register/
+
+### 6.2 Catalog
+
+1. GET /api/products/categories/
+2. GET /api/products/categories/{id}/
+3. GET /api/products/
+4. GET /api/products/{id}/
+5. GET /api/products/search/
+6. GET /api/products/in_stock/
+7. POST /api/products/
+8. PUT /api/products/{id}/
+9. DELETE /api/products/{id}/
+10. POST /api/products/{id}/variants/
+
+### 6.3 Cart
+
+1. GET /api/cart/current
+2. POST /api/cart/add_product
+3. POST /api/cart/remove_product
+4. POST /api/cart/update_quantity
+5. POST /api/cart/clear_cart
+
+### 6.4 Orders
+
+1. GET /api/orders
+2. GET /api/orders/{id}
+3. POST /api/orders
+4. POST /api/orders/{id}/update_status
+
+Compatibility note:
+- Backend accepts both /api/orders and /api/orders/.
+- Frontend should call no-slash constants by default.
+
+### 6.5 Interaction and Graph
+
+Events:
+1. GET /api/interactions/events
+2. POST /api/interactions/events
+3. GET /api/interactions/events/data_quality
+4. GET /api/interactions/events/top_queries
+5. GET /api/interactions/events/product_gaps
+6. GET /api/interactions/events/abandoned_carts
+7. GET /api/interactions/events/category_interest
+8. GET /api/interactions/events/signal_weights
+
+Graph:
+1. GET /api/interactions/graph/status
+2. POST /api/interactions/graph/rebuild
+3. GET /api/interactions/graph/user_interest
+4. GET /api/interactions/graph/product_neighbors
+5. GET /api/interactions/graph/query_paths
+6. GET /api/interactions/graph/similar_users
+
+### 6.6 AI
+
+1. GET /api/ai/recommend/home
+2. GET /api/ai/recommend/product-detail
+3. GET /api/ai/recommend/cart
+4. GET /api/ai/recommend/profile/snapshot
+5. GET /api/ai/profile/snapshot
+6. GET /api/ai/models/status
+7. POST /api/ai/chat
+8. POST /api/ai/chat/retrieve
+
+## 7. Route Plan
+
+Customer routes:
+1. /auth/register
+2. /auth/login
+3. /profile
+4. /products
+5. /products/:id
+6. /cart
+7. /checkout
+8. /orders
+9. /orders/:id
+10. /assistant
+
+Admin routes:
+1. /admin/login
+2. /admin/products
+3. /admin/orders
+4. /admin/interactions
+5. /admin/graph
+6. /admin/model-status
+
+## 8. Engineering Rules
+
+1. TypeScript strict mode enabled.
+2. Zod schema for each endpoint payload/response.
+3. Standard error mapping for detail and field errors.
+4. Each page has loading/success/empty/error states.
+5. Header handling is centralized:
+- Authorization
+- X-Cart-Session-Key
+- X-Request-ID
+6. Timeout/retry policy is centralized.
+
+## 9. Preflight Before FE Test
+
+1. Run docker-compose ps and verify required services are Up.
+2. Probe via gateway:
+- GET /health
+- GET /api/products/
+- GET /api/cart/current
+- GET /api/orders
+3. If any service just restarted, wait until endpoint accepts requests before FE smoke/E2E.
+
+## 10. Delivery Phases
+
+Phase A (Foundation):
+1. Bootstrap app and router.
+2. Setup providers (query, store, theme).
+3. Setup API client and header middleware.
+4. Mount global chat launcher shell.
+
+Phase B (Core commerce):
+1. Customer auth.
+2. Catalog and product detail.
+3. Cart and checkout.
+4. Order list/detail.
+
+Phase C (AI and chat):
+1. Recommendation widgets.
+2. Full AI chat page.
+3. Messenger-style chat widget.
+4. Profile snapshot and model status pages.
+
+Phase D (Admin and analytics):
+1. Staff auth.
+2. Product CRUD.
+3. Order status update.
+4. Interaction + graph tools.
+
+Phase E (QA and hardening):
+1. Unit/integration tests.
+2. Smoke E2E.
+3. Performance + accessibility pass.
+
+## 11. Definition of Done
+
+1. Customer flows work end-to-end.
+2. Admin tools work with proper access headers.
+3. API integration covers all service groups.
+4. Global chat popup works across target routes.
+5. Lint, typecheck, tests, build are green.
+6. Frontend and backend run together in Docker reliably.
+# Frontend Implementation Plan (Full System)
+
+## 1. Objective
+
+Build one unified frontend for the entire backend system, not only AI/chat.
+
+Primary goals:
+1. Integrate all gateway services documented in BACKEND_API_DOCS.
+2. Deliver a modern, responsive UI for customer and admin/staff workflows.
+3. Keep bug rate low via strict typing, runtime validation, and test gates.
+4. Run frontend Docker together with backend Docker stack.
+
+## 2. Source of Truth
+
+Main API contract documents:
+1. BACKEND_API_DOCS.md (full system map)
+2. ai-service/docs/frontend-api.md (AI request/response details)
+
+Gateway base URL for frontend:
+- http://localhost
+
+Runtime alignment notes (verified on 16 Apr 2026):
+- Gateway currently accepts both `/api/orders` and `/api/orders/`.
+- Prefer canonical no-trailing-slash for order API calls in frontend constants.
+- Right after `docker-compose up -d`, some Django services may still be booting even when container status is `Up`; run a short preflight health probe before FE smoke tests.
+
+Service prefixes:
+1. /api/staff/
+2. /api/customers/
+3. /api/cart/
+4. /api/products/
+5. /api/orders/
+6. /api/interactions/
+7. /api/ai/
+
 ## 3. Frontend Scope
 
 ## 3.1 Customer App
@@ -195,6 +472,10 @@ Headers:
 3. POST /api/orders
 4. POST /api/orders/{id}/update_status (admin)
 
+Compatibility:
+- Backend currently supports both slash and no-slash on order prefix.
+- Frontend endpoint constants should use no-slash style for consistency with cart/interaction/ai modules.
+
 Scope rules for GET:
 - customer_id query or X-Cart-Session-Key header required
 
@@ -323,6 +604,17 @@ Accessibility:
 4. aria-label for launcher and controls.
 
 ## 10. Delivery Phases
+
+## 9.1 Preflight Before FE Dev/Test
+
+Run these checks before FE smoke/E2E:
+1. `docker-compose ps` and ensure all required services are `Up`.
+2. Probe gateway and critical services through gateway:
+- `GET /health`
+- `GET /api/products/`
+- `GET /api/cart/current`
+- `GET /api/orders` (or `/api/orders/`)
+3. If a service just recreated, wait until it actually listens (not only container `Up`) before running FE tests.
 
 ## Phase A: Foundation (1 day)
 

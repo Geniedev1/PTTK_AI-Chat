@@ -1,0 +1,135 @@
+import { endpoints } from "../constants/endpoints"
+import type {
+  AiChatResponse,
+  AiRecommendResponse,
+  CartItem,
+  CartSummary,
+  CreateOrderResponse,
+  CustomerLoginResponse,
+  CustomerProfile,
+  CustomerProfileUpdatePayload,
+  CustomerRegisterPayload,
+  Order,
+  Product,
+} from "../types/api"
+import { httpClient } from "./httpClient"
+
+type ListProductsParams = {
+  search?: string
+}
+
+const withOptionalCustomerScope = (customerId?: number | null) =>
+  customerId
+    ? {
+        params: { customer_id: customerId },
+        headers: { "X-Cart-Session-Key": "" },
+      }
+    : undefined
+
+export const customerApi = {
+  register: async (payload: CustomerRegisterPayload): Promise<{ message: string }> => {
+    const { data } = await httpClient.post<{ message: string }>(endpoints.customers.register, payload)
+    return data
+  },
+  login: async (payload: { username: string; password: string }): Promise<CustomerLoginResponse> => {
+    const { data } = await httpClient.post<CustomerLoginResponse>(endpoints.customers.login, payload)
+    return data
+  },
+  profile: async (): Promise<CustomerProfile> => {
+    const { data } = await httpClient.get<CustomerProfile>(endpoints.customers.profile)
+    return data
+  },
+  updateProfile: async (payload: CustomerProfileUpdatePayload): Promise<CustomerProfile> => {
+    const { data } = await httpClient.put<CustomerProfile>(endpoints.customers.updateProfile, payload)
+    return data
+  },
+}
+
+export const productApi = {
+  list: async (params?: ListProductsParams): Promise<Product[]> => {
+    const query = params?.search?.trim() ? { search: params.search.trim() } : undefined
+    const { data } = await httpClient.get<Product[]>(endpoints.products.list, { params: query })
+    return data
+  },
+  detail: async (productId: number): Promise<Product> => {
+    const { data } = await httpClient.get<Product>(endpoints.products.detail(productId))
+    return data
+  },
+}
+
+export const cartApi = {
+  current: async (): Promise<CartSummary> => {
+    const { data } = await httpClient.get<CartSummary>(endpoints.cart.current)
+    return data
+  },
+  addProduct: async (payload: { product_id: number; quantity?: number }): Promise<CartItem> => {
+    const { data } = await httpClient.post<CartItem>(endpoints.cart.addProduct, payload)
+    return data
+  },
+  updateQuantity: async (payload: { product_id: number; quantity: number }): Promise<CartItem> => {
+    const { data } = await httpClient.post<CartItem>(endpoints.cart.updateQuantity, payload)
+    return data
+  },
+  removeProduct: async (payload: { product_id: number }): Promise<{ message: string }> => {
+    const { data } = await httpClient.post<{ message: string }>(endpoints.cart.removeProduct, payload)
+    return data
+  },
+  clear: async (): Promise<{ message: string }> => {
+    const { data } = await httpClient.post<{ message: string }>(endpoints.cart.clear)
+    return data
+  },
+}
+
+export const orderApi = {
+  list: async (customerId?: number | null): Promise<Order[]> => {
+    const { data } = await httpClient.get<Order[]>(
+      endpoints.orders.list,
+      withOptionalCustomerScope(customerId),
+    )
+    return data
+  },
+  detail: async (orderId: number, customerId?: number | null): Promise<Order> => {
+    const { data } = await httpClient.get<Order>(
+      endpoints.orders.detail(orderId),
+      withOptionalCustomerScope(customerId),
+    )
+    return data
+  },
+  create: async (payload: { customer_id?: number; clear_cart?: boolean }): Promise<CreateOrderResponse> => {
+    const { data } = await httpClient.post<CreateOrderResponse>(endpoints.orders.create, payload)
+    return data
+  },
+}
+
+export const aiApi = {
+  recommendHome: async (params?: {
+    user_id?: number
+    session_id?: string
+    limit?: number
+  }): Promise<AiRecommendResponse> => {
+    const { data } = await httpClient.get<AiRecommendResponse>(endpoints.ai.recommendHome, { params })
+    return data
+  },
+  recommendProductDetail: async (params: {
+    product_id: number
+    user_id?: number
+    session_id?: string
+    limit?: number
+  }): Promise<AiRecommendResponse> => {
+    const { data } = await httpClient.get<AiRecommendResponse>(endpoints.ai.recommendProductDetail, {
+      params,
+    })
+    return data
+  },
+  chat: async (payload: {
+    message: string
+    user_id?: number
+    session_id?: string
+    customer_id?: number
+    product_id?: number
+    order_id?: number
+  }): Promise<AiChatResponse> => {
+    const { data } = await httpClient.post<AiChatResponse>(endpoints.ai.chat, payload)
+    return data
+  },
+}
