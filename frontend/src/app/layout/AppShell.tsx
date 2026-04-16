@@ -3,10 +3,10 @@ import { GlobalChatWidget } from "../../modules/chat-widget/components/GlobalCha
 import { useSessionStore } from "../../shared/stores/sessionStore"
 
 const navItems = [
-  { to: "/products", label: "Products" },
+  { to: "/products", label: "Catalog" },
   { to: "/cart", label: "Cart" },
   { to: "/orders", label: "Orders" },
-  { to: "/assistant", label: "Assistant" },
+  { to: "/assistant", label: "AI Assistant" },
 ]
 
 export function AppShell() {
@@ -19,47 +19,56 @@ export function AppShell() {
   return (
     <div className="app-shell">
       <header className="topbar">
-        <Link to="/" className="brand">
-          AI Commerce Frontend
-        </Link>
-        <nav className="topnav">
-          {navItems.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              className={({ isActive }) => (isActive ? "topnav-link active" : "topnav-link")}
-            >
-              {item.label}
-            </NavLink>
-          ))}
-          <NavLink to="/admin/login" className={({ isActive }) => (isActive ? "topnav-link active" : "topnav-link")}>
-            Admin
-          </NavLink>
-          {customerToken ? (
-            <>
-              <NavLink to="/profile" className={({ isActive }) => (isActive ? "topnav-link active" : "topnav-link")}>
-                {customerUsername ? `Profile (${customerUsername})` : "Profile"}
-              </NavLink>
-              <button className="topnav-button" onClick={clearAuth}>Logout</button>
-            </>
-          ) : (
-            <>
-              <NavLink to="/auth/login" className={({ isActive }) => (isActive ? "topnav-link active" : "topnav-link")}>
-                Login
-              </NavLink>
+        <div className="topbar-inner">
+          <Link to="/" className="brand">
+            <span className="brand-title">Genie Commerce</span>
+            <span className="brand-subtitle">AI-powered business storefront</span>
+          </Link>
+          <nav className="topnav">
+            {navItems.map((item) => (
               <NavLink
-                to="/auth/register"
+                key={item.to}
+                to={item.to}
                 className={({ isActive }) => (isActive ? "topnav-link active" : "topnav-link")}
               >
-                Register
+                {item.label}
               </NavLink>
-            </>
-          )}
-        </nav>
+            ))}
+            <NavLink to="/admin/login" className={({ isActive }) => (isActive ? "topnav-link active" : "topnav-link")}>
+              Admin
+            </NavLink>
+            {customerToken ? (
+              <>
+                <NavLink to="/profile" className={({ isActive }) => (isActive ? "topnav-link active" : "topnav-link")}>
+                  {customerUsername ? `Profile (${customerUsername})` : "Profile"}
+                </NavLink>
+                <button className="topnav-button" onClick={clearAuth}>Logout</button>
+              </>
+            ) : (
+              <>
+                <NavLink
+                  to="/auth/login"
+                  className={({ isActive }) => (isActive ? "topnav-link active" : "topnav-link")}
+                >
+                  Login
+                </NavLink>
+                <NavLink
+                  to="/auth/register"
+                  className={({ isActive }) => (isActive ? "topnav-link active" : "topnav-link")}
+                >
+                  Register
+                </NavLink>
+              </>
+            )}
+          </nav>
+        </div>
       </header>
       <main className="content">
         <Outlet />
       </main>
+      <footer className="site-footer">
+        <p>© {new Date().getFullYear()} Genie Commerce. Smart shopping experiences for modern businesses.</p>
+      </footer>
       {showChat ? <GlobalChatWidget /> : null}
     </div>
   )

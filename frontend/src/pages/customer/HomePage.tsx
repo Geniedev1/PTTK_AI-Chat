@@ -22,36 +22,54 @@ export function HomePage() {
   })
 
   return (
-    <section className="panel">
-      <h1>Commerce Frontend</h1>
-      <p>
-        Core Phase B flow is live: customer auth, products, cart, and order creation through gateway-backed
-        APIs.
-      </p>
-      <div className="status-grid">
-        <div className="status-item">
-          <strong>Auth</strong>
-          <span>{customerToken ? `Logged in as ${customerUsername ?? "customer"}` : "Guest mode"}</span>
+    <div className="home-page">
+      <section className="panel home-hero">
+        <p className="eyebrow">Smart Commerce Platform</p>
+        <h1>Professional storefront for business-ready online selling</h1>
+        <p className="lead">
+          Manage customer sessions, product discovery, cart flow, order creation, and AI recommendations in one
+          unified experience.
+        </p>
+        <div className="hero-actions">
+          <Link to="/products">Explore Catalog</Link>
+          <Link to="/assistant">Talk to AI Assistant</Link>
+          {!customerToken ? <Link to="/auth/login">Customer Login</Link> : <Link to="/profile">Open Profile</Link>}
         </div>
-        <div className="status-item">
-          <strong>Customer ID Scope</strong>
-          <span>{customerId ?? "Not set"}</span>
+        <div className="status-grid">
+          <div className="status-item">
+            <strong>Auth</strong>
+            <span>{customerToken ? `Logged in as ${customerUsername ?? "customer"}` : "Guest mode"}</span>
+          </div>
+          <div className="status-item">
+            <strong>Customer ID Scope</strong>
+            <span>{customerId ?? "Not set"}</span>
+          </div>
+          <div className="status-item">
+            <strong>Cart Session</strong>
+            <span>{cartSessionKey ?? "Will be created on first cart call"}</span>
+          </div>
         </div>
-        <div className="status-item">
-          <strong>Cart Session</strong>
-          <span>{cartSessionKey ?? "Will be created on first cart call"}</span>
-        </div>
-      </div>
-      <div className="quick-links">
-        <Link to="/auth/login">Login</Link>
-        <Link to="/auth/register">Register</Link>
-        <Link to="/products">Browse Products</Link>
-        <Link to="/cart">Open Cart</Link>
-        <Link to="/orders">View Orders</Link>
-        <Link to="/profile">Profile</Link>
-      </div>
+      </section>
 
-      <section className="ai-section">
+      <section className="panel">
+        <h2>Why businesses choose this frontend</h2>
+        <div className="feature-grid">
+          <div className="feature-card">
+            <h3>Reliable order workflow</h3>
+            <p>From product listing to checkout and order tracking, the full core purchase flow is connected.</p>
+          </div>
+          <div className="feature-card">
+            <h3>AI-driven engagement</h3>
+            <p>Support product discovery with recommendation endpoints and conversational assistant features.</p>
+          </div>
+          <div className="feature-card">
+            <h3>Customer-first UX</h3>
+            <p>Provide login, profile management, and persistent cart context for a better shopping journey.</p>
+          </div>
+        </div>
+      </section>
+
+      <section className="panel ai-section">
         <h2>AI Home Recommendations</h2>
         {recommendHomeQuery.isLoading ? <p>Loading recommendations...</p> : null}
         {recommendHomeQuery.isError ? (
@@ -79,6 +97,6 @@ export function HomePage() {
           </div>
         ) : null}
       </section>
-    </section>
+    </div>
   )
 }
