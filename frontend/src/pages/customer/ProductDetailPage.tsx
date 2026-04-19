@@ -3,6 +3,7 @@ import { useMemo, useState } from "react"
 import { Link } from "react-router-dom"
 import { useParams } from "react-router-dom"
 import { aiApi, cartApi, productApi } from "../../shared/api/services"
+import { PRODUCT_PLACEHOLDER_IMAGE } from "../../shared/constants/media"
 import { useSessionStore } from "../../shared/stores/sessionStore"
 import { getApiErrorMessage } from "../../shared/utils/apiError"
 
@@ -59,6 +60,15 @@ export function ProductDetailPage() {
 
       {productQuery.data ? (
         <div className="detail-block">
+          <img
+            className="product-detail-image"
+            src={productQuery.data.image_urls[0] || PRODUCT_PLACEHOLDER_IMAGE}
+            alt={productQuery.data.name}
+            loading="lazy"
+            onError={(event) => {
+              event.currentTarget.src = PRODUCT_PLACEHOLDER_IMAGE
+            }}
+          />
           <h2>{productQuery.data.name}</h2>
           <p>{productQuery.data.description || productQuery.data.short_description || "No description"}</p>
           <div className="product-meta">
@@ -106,6 +116,15 @@ export function ProductDetailPage() {
           <div className="product-grid">
             {relatedRecommendQuery.data.items.map((item) => (
               <article className="product-card" key={item.product.id}>
+                <img
+                  className="product-card-image"
+                  src={item.product.image_urls?.[0] || PRODUCT_PLACEHOLDER_IMAGE}
+                  alt={item.product.name}
+                  loading="lazy"
+                  onError={(event) => {
+                    event.currentTarget.src = PRODUCT_PLACEHOLDER_IMAGE
+                  }}
+                />
                 <h3>{item.product.name}</h3>
                 <p>{item.product.short_description || "Recommended alternative"}</p>
                 <div className="product-meta">

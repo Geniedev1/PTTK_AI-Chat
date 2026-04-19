@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link } from "react-router-dom"
 import { useMemo, useState } from "react"
 import { cartApi, productApi } from "../../shared/api/services"
+import { PRODUCT_PLACEHOLDER_IMAGE } from "../../shared/constants/media"
 import { getApiErrorMessage } from "../../shared/utils/apiError"
 
 export function ProductsPage() {
@@ -43,6 +44,15 @@ export function ProductsPage() {
         <div className="product-grid">
           {productsQuery.data.map((product) => (
             <article className="product-card" key={product.id}>
+              <img
+                className="product-card-image"
+                src={product.image_urls[0] || PRODUCT_PLACEHOLDER_IMAGE}
+                alt={product.name}
+                loading="lazy"
+                onError={(event) => {
+                  event.currentTarget.src = PRODUCT_PLACEHOLDER_IMAGE
+                }}
+              />
               <h2>{product.name}</h2>
               <p>{product.short_description || product.description || "No description"}</p>
               <div className="product-meta">

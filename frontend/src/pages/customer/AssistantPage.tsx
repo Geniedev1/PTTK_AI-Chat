@@ -38,10 +38,9 @@ export function AssistantPage() {
 
       return aiApi.chat(payload)
     },
-    onSuccess: (data, userMessage) => {
+    onSuccess: (data) => {
       setMessages((prev) => [
         ...prev,
-        { role: "user", text: userMessage },
         {
           role: "assistant",
           text: data.answer,
@@ -49,7 +48,16 @@ export function AssistantPage() {
           retrievalMode: data.retrieval_mode,
         },
       ])
-      setInput("")
+    },
+    onError: (error) => {
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          text: `Request failed: ${getApiErrorMessage(error)}`,
+          retrievalMode: "error",
+        },
+      ])
     },
   })
 
@@ -59,6 +67,8 @@ export function AssistantPage() {
     if (!trimmed || chatMutation.isPending) {
       return
     }
+    setMessages((prev) => [...prev, { role: "user", text: trimmed }])
+    setInput("")
     chatMutation.mutate(trimmed)
   }
 
@@ -106,6 +116,8 @@ export function AssistantPage() {
           {chatMutation.isPending ? "Sending..." : "Send"}
         </button>
       </form>
+
+      {chatMutation.isPending ? <p className="chat-empty">Assistant is thinking...</p> : null}
 
       {chatMutation.isError ? <p className="error-text">{getApiErrorMessage(chatMutation.error)}</p> : null}
     </section>

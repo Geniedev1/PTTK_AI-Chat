@@ -485,6 +485,48 @@ class ChatbotServiceTest(TestCase):
 
         self.assertEqual(self.interaction_client.emitted_events, [])
 
+    def test_chat_greeting_returns_product_hints_when_context_is_missing(self):
+        payload = self.service.chat(message="xin chao")
+
+        self.assertFalse(payload["used_realtime_api"])
+        self.assertIn("Chao ban", payload["answer"])
+        self.assertIn("Silent Keyboard Pro", payload["answer"])
+
+    def test_chat_policy_fallback_formats_answer_without_markdown_artifacts(self):
+        payload = self.service.chat(message="shipping policy")
+
+        self.assertFalse(payload["used_realtime_api"])
+        self.assertTrue(payload["sources"])
+        self.assertIn("Orders are prepared", payload["answer"])
+        self.assertNotIn("Based on `", payload["answer"])
+        self.assertNotIn("Related context is also available", payload["answer"])
+        self.assertNotIn("Shipping:", payload["answer"])
+        self.assertNotIn("# ", payload["answer"])
+
+    def test_chat_vietnamese_greeting_with_diacritics_routes_to_greeting_mode(self):
+        payload = self.service.chat(message="chào bạn")
+
+        self.assertFalse(payload["used_realtime_api"])
+        self.assertEqual(payload["retrieval_mode"], "greeting")
+        self.assertIn("Chao ban", payload["answer"])
+        self.assertEqual(payload["sources"], [])
+
+    def test_chat_capability_question_routes_to_general_mode(self):
+        payload = self.service.chat(message="Ban co the lam gi")
+
+        self.assertFalse(payload["used_realtime_api"])
+        self.assertEqual(payload["retrieval_mode"], "general-fallback")
+        self.assertEqual(payload["sources"], [])
+        self.assertIn("2 nhom cau hoi", payload["answer"])
+
+    def test_chat_generic_product_advice_does_not_fall_into_policy_excerpt(self):
+        payload = self.service.chat(message="Tu van ve mot san pham dien hinh")
+
+        self.assertFalse(payload["used_realtime_api"])
+        self.assertEqual(payload["retrieval_mode"], "general-fallback")
+        self.assertEqual(payload["sources"], [])
+        self.assertNotIn("Return Policy", payload["answer"])
+
 
 @override_settings(KNOWLEDGE_BASE_DIR=KNOWLEDGE_BASE_DIR)
 class ChatViewTest(TestCase):

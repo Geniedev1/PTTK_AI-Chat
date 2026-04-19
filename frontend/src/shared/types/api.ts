@@ -130,6 +130,7 @@ export type AiRecommendationProduct = {
   stock: number
   has_stock: boolean
   tags: string[]
+  image_urls?: string[]
 }
 
 export type AiRecommendationItem = {

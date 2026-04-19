@@ -14,6 +14,7 @@ services:
       AI_SERVICE_URL: http://ai-service:8007
       ALLOWED_HOSTS: "*"
       PROXY_TIMEOUT: 30
+      CORS_ALLOWED_ORIGINS: http://localhost:5173,http://127.0.0.1:5173,http://localhost,http://127.0.0.1
     ports:
       - "80:80"
     depends_on:
@@ -329,7 +330,7 @@ services:
       INTERNAL_ADMIN_KEY: ${INTERNAL_ADMIN_KEY:-change-this-in-dev}
       ALLOWED_HOSTS: "*"
       REQUEST_TIMEOUT_SECONDS: 10
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-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}
       OPENAI_CHAT_MODEL: ${OPENAI_CHAT_MODEL:-gpt-5-mini}
       OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
     ports:

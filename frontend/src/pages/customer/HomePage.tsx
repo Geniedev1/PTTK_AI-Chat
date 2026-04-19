@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { Link } from "react-router-dom"
 import { aiApi } from "../../shared/api/services"
+import { PRODUCT_PLACEHOLDER_IMAGE } from "../../shared/constants/media"
 import { useSessionStore } from "../../shared/stores/sessionStore"
 import { getApiErrorMessage } from "../../shared/utils/apiError"
 
@@ -65,6 +66,15 @@ export function HomePage() {
           <div className="product-grid">
             {recommendHomeQuery.data.items.map((item) => (
               <article className="product-card" key={item.product.id}>
+                <img
+                  className="product-card-image"
+                  src={item.product.image_urls?.[0] || PRODUCT_PLACEHOLDER_IMAGE}
+                  alt={item.product.name}
+                  loading="lazy"
+                  onError={(event) => {
+                    event.currentTarget.src = PRODUCT_PLACEHOLDER_IMAGE
+                  }}
+                />
                 <h3>{item.product.name}</h3>
                 <p>{item.product.short_description || "Recommended for you"}</p>
                 <div className="product-meta">

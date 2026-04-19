@@ -172,6 +172,15 @@ a {
   background: #fff;
 }
 
+.product-card-image {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border-radius: 12px;
+  border: 1px solid #d5deea;
+  background: #edf2f8;
+}
+
 .product-card h2 {
   margin: 0;
   font-size: 1.1rem;
@@ -248,6 +257,15 @@ a {
   margin-top: 14px;
   display: grid;
   gap: 10px;
+}
+
+.product-detail-image {
+  width: min(100%, 560px);
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border-radius: 14px;
+  border: 1px solid #d1dbe7;
+  background: #edf2f8;
 }
 
 .item-list {
@@ -421,6 +439,15 @@ a {
   padding: 8px 10px;
   border-radius: 11px;
   background: #ebf3fc;
+  white-space: pre-wrap;
+}
+
+.chat-message.user {
+  background: #edf4ff;
+}
+
+.chat-message.assistant {
+  background: #f8f9fb;
 }
 
 .chat-empty {

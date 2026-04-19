@@ -2,6 +2,7 @@ import json
 import logging
 import math
 import re
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -14,11 +15,43 @@ from .services import ProductCatalogClient, ServiceClientError
 
 logger = logging.getLogger(__name__)
 
-TOKEN_PATTERN = re.compile(r"[a-zA-Z0-9]+")
+TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
 CART_KEYWORDS = ("cart", "gio hang", "basket", "checkout")
 PRICE_KEYWORDS = ("price", "gia", "bao nhieu")
 STOCK_KEYWORDS = ("stock", "ton kho", "con hang", "available")
 ORDER_STATUS_TERMS = ("status", "trang thai", "pending", "confirmed", "paid", "completed", "cancelled", "my order", "where is")
+GREETING_KEYWORDS = ("xin chao", "chao", "hello", "hi", "hey")
+DOMAIN_INTENT_KEYWORDS = (
+    "product",
+    "san pham",
+    "gia",
+    "price",
+    "stock",
+    "ton kho",
+    "order",
+    "don hang",
+    "cart",
+    "gio hang",
+    "shipping",
+    "payment",
+    "return",
+    "policy",
+    "faq",
+)
+CAPABILITY_QUESTION_KEYWORDS = (
+    "ban co the lam gi",
+    "ban lam duoc gi",
+    "what can you do",
+    "what do you do",
+    "help me",
+)
+ADVICE_KEYWORDS = (
+    "tu van",
+    "goi y",
+    "de xuat",
+    "recommend",
+    "suggest",
+)
 
 
 @dataclass
@@ -290,6 +323,17 @@ class ChatbotService:
         if realtime is not None:
             return realtime
 
+        if self._is_greeting_message(normalized_message):
+            profile_snapshot = self._build_profile_snapshot({}, user_id=user_id, session_id=session_id)
+            return {
+                "answer": self._fallback_answer(normalized_message, {"sources": [], "graph_context": []}),
+                "sources": [],
+                "used_realtime_api": False,
+                "used_graph_context": False,
+                "retrieval_mode": "greeting",
+                "profile_snapshot": profile_snapshot,
+            }
+
         retrieval = self.retrieve(
             message=normalized_message,
             user_id=user_id,
@@ -297,6 +341,27 @@ class ChatbotService:
             product_id=product_id,
             limit=getattr(settings, "CHAT_RETRIEVAL_LIMIT", 5),
         )
+
+        if self._should_use_general_answer(normalized_message, retrieval):
+            general_answer = self._generate_general_answer(normalized_message)
+            if general_answer:
+                return {
+                    "answer": general_answer,
+                    "sources": [],
+                    "used_realtime_api": False,
+                    "used_graph_context": False,
+                    "retrieval_mode": "general-openai",
+                    "profile_snapshot": retrieval["profile_snapshot"],
+                }
+            return {
+                "answer": self._general_fallback_answer(),
+                "sources": [],
+                "used_realtime_api": False,
+                "used_graph_context": False,
+                "retrieval_mode": "general-fallback",
+                "profile_snapshot": retrieval["profile_snapshot"],
+            }
+
         answer = self._generate_grounded_answer(normalized_message, retrieval)
         return {
             "answer": answer,
@@ -362,7 +427,7 @@ class ChatbotService:
         }
 
     def _route_realtime(self, message, *, user_id=None, session_id=None, customer_id=None, product_id=None, order_id=None):
-        lowered = message.lower()
+        lowered = self._normalize_text(message)
         if self._is_order_status_question(lowered, order_id=order_id):
             return self._answer_order_status(customer_id=customer_id, session_id=session_id, order_id=order_id)
         if self._contains_any(lowered, CART_KEYWORDS):
@@ -606,7 +671,7 @@ class ChatbotService:
         generated = self.openai_client.generate_answer(prompt=prompt, question=message)
         if generated:
             return generated
-        return self._fallback_answer(retrieval)
+        return self._fallback_answer(message, retrieval)
 
     def _build_prompt(self, message, retrieval):
         source_lines = []
@@ -632,17 +697,120 @@ class ChatbotService:
             + ("\n".join(profile_lines) if profile_lines else "No behavioral profile.")
         )
 
-    def _fallback_answer(self, retrieval):
+    def _generate_general_answer(self, message):
+        prompt = (
+            "You are a concise and practical shopping assistant. "
+            "Answer in the same language as the user. "
+            "If the request is broad, provide a useful structure and ask one clear follow-up question. "
+            "Do not invent realtime values such as exact stock, order status, or current price unless explicitly provided by APIs."
+        )
+        return self.openai_client.generate_answer(prompt=prompt, question=message)
+
+    def _general_fallback_answer(self):
+        return (
+            "Minh co the ho tro 2 nhom cau hoi: "
+            "(1) du lieu he thong cua shop nhu san pham, gia, ton kho, gio hang, don hang, policy; "
+            "(2) cau hoi tong quat khi ket noi AI ben ngoai kha dung. "
+            "Ban hay noi ro muc tieu (vi du: 'goi y 3 ban phim yen tinh tam gia 1-2 trieu') de minh tu van dung hon."
+        )
+
+    def _should_use_general_answer(self, message, retrieval):
+        normalized_message = self._normalize_text(message)
+        if not normalized_message:
+            return False
+
+        if self._contains_any(normalized_message, CAPABILITY_QUESTION_KEYWORDS):
+            return True
+
+        if self._contains_any(normalized_message, ADVICE_KEYWORDS):
+            return not self._has_product_context(retrieval)
+
+        if self._contains_any(normalized_message, GREETING_KEYWORDS):
+            return False
+
+        if not self._contains_any(normalized_message, DOMAIN_INTENT_KEYWORDS):
+            return True
+
+        return False
+
+    def _has_product_context(self, retrieval):
+        for source in (retrieval.get("sources") or [])[:3]:
+            if source.get("source_type") == "product":
+                return True
+        return False
+
+    def _fallback_answer(self, message, retrieval):
+        lowered_message = self._normalize_text(message)
         if not retrieval["sources"]:
-            return "I could not find enough grounded context to answer reliably. Try asking with a product name, product_id, or a more specific policy question."
+            suggested_products = self._suggest_products(message=lowered_message, limit=3)
+            if self._contains_any(lowered_message, GREETING_KEYWORDS):
+                if suggested_products:
+                    return (
+                        "Chao ban! Minh co the tu van san pham, gia, ton kho, va trang thai don hang. "
+                        f"Ban co the bat dau voi: {suggested_products}. "
+                        "Thu hoi: 'gia cua Silent Keyboard Pro' hoac 'ton kho product_id 2'."
+                    )
+                return (
+                    "Chao ban! Minh co the ho tro ve san pham, gia, ton kho, gio hang, va don hang. "
+                    "Ban hay cho minh ten san pham hoac product_id de tra loi chinh xac hon."
+                )
+
+            if suggested_products:
+                return (
+                    "Minh chua co du ngu canh grounded cho cau hoi nay, nhung co the ho tro theo du lieu hien co. "
+                    f"Mot so san pham ban co the tham khao: {suggested_products}. "
+                    "Ban thu neu ro ten san pham hoac hoi dang 'gia/ton kho cua <ten san pham>'."
+                )
+
+            return (
+                "Minh chua du ngu canh grounded de tra loi chac chan. "
+                "Ban thu neu ro ten san pham, product_id, hoac cau hoi policy cu the hon nhe."
+            )
 
         lead = retrieval["sources"][0]
-        answer_parts = [f"Based on `{lead['title']}`, {lead['excerpt']}"]
-        if len(retrieval["sources"]) > 1:
-            answer_parts.append(f"Related context also appears in `{retrieval['sources'][1]['title']}`.")
+        lead_excerpt = self._summarize_excerpt(lead.get("excerpt", ""))
+        lead_excerpt = self._strip_leading_title_phrase(lead.get("title", ""), lead_excerpt)
+        answer_parts = [lead_excerpt]
         if retrieval["graph_context"]:
             answer_parts.append(f"Recent graph context suggests interest around {retrieval['graph_context'][0]['label']}.")
         return " ".join(answer_parts)
+
+    def _suggest_products(self, *, message, limit=3):
+        try:
+            products = self.product_client.fetch_products()
+        except ServiceClientError:
+            return ""
+
+        query_tokens = self._tokens(message)
+        candidates = []
+        for product in products:
+            if not product.get("is_active", False):
+                continue
+            if not product.get("has_stock", False):
+                continue
+
+            product_text = " ".join(
+                [
+                    str(product.get("name") or ""),
+                    str(product.get("short_description") or ""),
+                    " ".join(product.get("tags") or []),
+                ]
+            ).lower()
+            product_tokens = self._tokens(product_text)
+            overlap_score = len(query_tokens & product_tokens)
+            candidates.append((overlap_score, product))
+
+        if not candidates:
+            return ""
+
+        # If there is no lexical overlap, still suggest stable top in-stock products.
+        candidates.sort(key=lambda item: (-item[0], int(item[1].get("id", 0))))
+        top = [row[1] for row in candidates[:limit]]
+        return ", ".join(
+            f"{product.get('name')} (${product.get('base_price')})"
+            for product in top
+            if product.get("name")
+        )
 
     def _resolve_product(self, products, *, explicit_product_id=None, message=""):
         if explicit_product_id is not None:
@@ -651,11 +819,11 @@ class ChatbotService:
                     return product
             return None
 
-        lowered = message.lower()
+        lowered = self._normalize_text(message)
         best = None
         best_score = 0
         for product in products:
-            name = (product.get("name") or "").lower()
+            name = self._normalize_text(product.get("name") or "")
             if not name:
                 continue
             score = sum(1 for token in self._tokens(name) if token in lowered)
@@ -800,19 +968,146 @@ class ChatbotService:
             start = end
         return chunks
 
+    def _summarize_excerpt(self, excerpt, max_chars=280):
+        cleaned = self._clean_markdown_text(excerpt)
+        if not cleaned:
+            return "I found relevant context, but it needs a more specific follow-up question."
+
+        sentences = re.split(r"(?<=[.!?])\s+", cleaned)
+        summary_parts = []
+        current_length = 0
+        for sentence in sentences:
+            sentence = sentence.strip()
+            if not sentence:
+                continue
+            extra_length = len(sentence) + (1 if summary_parts else 0)
+            if current_length + extra_length > max_chars:
+                break
+            summary_parts.append(sentence)
+            current_length += extra_length
+            if len(summary_parts) >= 2:
+                break
+
+        if summary_parts:
+            return " ".join(summary_parts)
+
+        truncated = cleaned[:max_chars].rstrip()
+        if len(cleaned) > max_chars:
+            truncated += "..."
+        return truncated
+
+    def _clean_markdown_text(self, text):
+        if not text:
+            return ""
+
+        lines = []
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            line = re.sub(r"^#{1,6}\s*", "", line)
+            line = re.sub(r"^[-*+]\s+", "", line)
+            line = re.sub(r"\[(.*?)\]\((.*?)\)", r"\1", line)
+            line = line.replace("`", "")
+            lines.append(line)
+
+        normalized = " ".join(lines)
+        return re.sub(r"\s+", " ", normalized).strip()
+
+    def _strip_leading_title_phrase(self, title, excerpt):
+        if not title or not excerpt:
+            return excerpt
+
+        title_clean = re.sub(r"[^a-z0-9 ]+", " ", title.lower())
+        title_tokens = [token for token in title_clean.split() if token]
+        if not title_tokens:
+            return excerpt
+
+        excerpt_words = excerpt.split()
+        lower_words = [re.sub(r"[^a-z0-9]+", "", word.lower()) for word in excerpt_words]
+
+        # Remove leading repeated title phrase (e.g., "Shipping Policy" when title is "Shipping").
+        if lower_words and lower_words[0] in title_tokens:
+            cut_index = 0
+            while cut_index < len(lower_words):
+                token = lower_words[cut_index]
+                if not token:
+                    cut_index += 1
+                    continue
+                if token in title_tokens or token == "policy":
+                    cut_index += 1
+                    continue
+                break
+            stripped = " ".join(excerpt_words[cut_index:]).strip()
+            if stripped:
+                return stripped
+
+        return excerpt
+
     def _tokens(self, text):
-        return {token.lower() for token in TOKEN_PATTERN.findall(text.lower())}
+        normalized = self._normalize_text(text)
+        return {token for token in TOKEN_PATTERN.findall(normalized) if len(token) >= 2}
 
     def _contains_any(self, text, keywords):
-        return any(keyword in text for keyword in keywords)
+        normalized_text = self._normalize_text(text)
+        if not normalized_text:
+            return False
+        padded = f" {normalized_text} "
+        for keyword in keywords:
+            normalized_keyword = self._normalize_text(keyword)
+            if normalized_keyword and f" {normalized_keyword} " in padded:
+                return True
+        return False
+
+    def _is_greeting_message(self, text):
+        normalized_text = self._normalize_text(text)
+        if not normalized_text:
+            return False
+
+        greeting_match = any(
+            normalized_text == keyword or normalized_text.startswith(f"{keyword} ")
+            for keyword in GREETING_KEYWORDS
+        )
+        if not greeting_match:
+            return False
+
+        intent_keywords = (
+            "price",
+            "gia",
+            "stock",
+            "ton kho",
+            "order",
+            "don hang",
+            "shipping",
+            "payment",
+            "return",
+            "policy",
+            "cart",
+            "gio hang",
+            "faq",
+        )
+        if self._contains_any(normalized_text, intent_keywords):
+            return False
+
+        return len(normalized_text.split()) <= 6
 
     def _is_order_status_question(self, text, *, order_id=None):
         if order_id is not None:
             return True
-        order_terms_present = "order" in text or "don hang" in text
+        normalized = self._normalize_text(text)
+        order_terms_present = self._contains_any(normalized, ("order", "don hang"))
         if not order_terms_present:
             return False
-        return any(term in text for term in ORDER_STATUS_TERMS)
+        return self._contains_any(normalized, ORDER_STATUS_TERMS)
+
+    def _normalize_text(self, text):
+        if not text:
+            return ""
+        lowered = str(text).lower()
+        decomposed = unicodedata.normalize("NFKD", lowered)
+        no_diacritics = "".join(char for char in decomposed if not unicodedata.combining(char))
+        ascii_only = no_diacritics.encode("ascii", "ignore").decode("ascii")
+        return re.sub(r"\s+", " ", ascii_only).strip()
 
     def _cosine_similarity(self, left, right):
         if not left or not right:
