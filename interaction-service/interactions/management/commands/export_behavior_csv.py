@@ -1,10 +1,17 @@
-import csv
 import json
 from pathlib import Path
 
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
+from interactions.exercise_behavior import (
+    EXERCISE_SUBMISSION_HEADERS,
+    FULL_EXPORT_HEADERS,
+    build_submission_quality_report,
+    event_to_full_row,
+    event_to_submission_row,
+    write_csv,
+)
 from interactions.models import InteractionEvent
 
 
@@ -28,11 +35,24 @@ class Command(BaseCommand):
             default=100,
             help="Number of distinct users to include (ordered by user_id). Use 0 for all users.",
         )
+        parser.add_argument(
+            "--mode",
+            choices=["full", "submission"],
+            default="full",
+            help="full = internal event export, submission = user_id/product_id/action/timestamp format for exercise.",
+        )
+        parser.add_argument(
+            "--quality-report",
+            default="",
+            help="Optional JSON report path. Mainly used with --mode submission.",
+        )
 
     def handle(self, *args, **options):
         output_path = self._resolve_output_path(options["output"])
         source = str(options["source"]).strip()
         user_count = int(options["user_count"])
+        mode = str(options["mode"]).strip()
+        quality_report_path = str(options["quality_report"]).strip()
 
         if user_count < 0:
             raise CommandError("--user-count must be >= 0")
@@ -51,51 +71,58 @@ class Command(BaseCommand):
                 raise CommandError("No events matched selected filters; nothing to export.")
             queryset = queryset.filter(user_id__in=selected_user_ids)
 
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-
-        headers = [
-            "event_id",
-            "event_type",
-            "user_id",
-            "session_id",
-            "product_id",
-            "query_text",
-            "source",
-            "signal_weight",
-            "timestamp",
-            "metadata_json",
-        ]
-
-        row_count = 0
+        rows = []
         user_ids = set()
-        with output_path.open("w", newline="", encoding="utf-8") as handle:
-            writer = csv.DictWriter(handle, fieldnames=headers)
-            writer.writeheader()
-            for event in queryset.iterator(chunk_size=1000):
-                row_count += 1
-                user_ids.add(event.user_id)
-                writer.writerow(
-                    {
-                        "event_id": str(event.event_id),
-                        "event_type": event.event_type,
-                        "user_id": event.user_id,
-                        "session_id": event.session_id or "",
-                        "product_id": event.product_id if event.product_id is not None else "",
-                        "query_text": event.query_text or "",
-                        "source": event.source,
-                        "signal_weight": event.signal_weight,
-                        "timestamp": event.timestamp.isoformat(),
-                        "metadata_json": json.dumps(event.metadata or {}, ensure_ascii=True, sort_keys=True),
-                    }
-                )
+        for event in queryset.iterator(chunk_size=1000):
+            if mode == "submission":
+                row = event_to_submission_row(event)
+            else:
+                row = event_to_full_row(event)
+            if row is None:
+                continue
+            rows.append(row)
+            if row.get("user_id") not in ("", None):
+                user_ids.add(int(row["user_id"]))
 
-        if row_count == 0:
+        if not rows:
             raise CommandError("No rows exported. Adjust filters or generate behavior data first.")
+
+        headers = EXERCISE_SUBMISSION_HEADERS if mode == "submission" else FULL_EXPORT_HEADERS
+        write_csv(output_path, headers, rows)
+
+        if quality_report_path:
+            quality_path = self._resolve_output_path(quality_report_path)
+            quality_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {}
+            if mode == "submission":
+                payload = build_submission_quality_report(rows)
+                payload["output"] = str(output_path)
+                payload["mode"] = mode
+                quality_path.write_text(
+                    json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True),
+                    encoding="utf-8",
+                )
+            else:
+                quality_path.write_text(
+                    json.dumps(
+                        {
+                            "output": str(output_path),
+                            "mode": mode,
+                            "row_count": len(rows),
+                            "distinct_user_count": len(user_ids),
+                        },
+                        ensure_ascii=True,
+                        indent=2,
+                        sort_keys=True,
+                    ),
+                    encoding="utf-8",
+                )
 
         self.stdout.write(self.style.SUCCESS("Behavior CSV export completed."))
         self.stdout.write(f"output={output_path}")
-        self.stdout.write(f"rows={row_count}")
+        self.stdout.write(f"rows={len(rows)}")
         self.stdout.write(f"distinct_users={len(user_ids)}")
+        self.stdout.write(f"mode={mode}")
 
     def _resolve_output_path(self, raw_path):
         target = Path(str(raw_path)).expanduser()

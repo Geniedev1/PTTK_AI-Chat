@@ -4,6 +4,7 @@ import json
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
+import numpy as np
 from django.core.management import call_command
 from django.test import TestCase, override_settings
 from django.http import HttpResponse
@@ -995,3 +996,89 @@ class TrainRankingModelCommandTest(TestCase):
                 call_command("train_ranking_model", "--dataset-dir", str(dataset_dir))
 
             self.assertEqual(load_jsonl(dataset_dir / "dataset_train.jsonl"), [])
+
+
+class ExerciseSequenceDatasetBuilderTest(TestCase):
+    def test_build_and_save_sequence_dataset_artifacts(self):
+        from recommendations.exercise_sequence_dataset import build_sequence_artifacts, save_sequence_artifacts
+
+        with TemporaryDirectory() as tmp_dir:
+            csv_path = Path(tmp_dir) / "data_user500_full.csv"
+            csv_path.write_text(
+                "\n".join(
+                    [
+                        "event_id,event_type,user_id,session_id,product_id,query_text,source,signal_weight,timestamp,metadata_json",
+                        '1,search_performed,1,s1,,keyboard,synthetic,1,2026-04-01T10:00:00Z,"{}"',
+                        '2,product_viewed,1,s1,10,,synthetic,1,2026-04-01T10:05:00Z,"{""category_id"": 2}"',
+                        '3,product_clicked,1,s1,10,,synthetic,2,2026-04-01T10:06:00Z,"{""category_id"": 2}"',
+                        '4,cart_item_added,1,s1,10,,synthetic,4,2026-04-01T10:07:00Z,"{""category_id"": 2}"',
+                        '5,product_viewed,2,s2,11,,synthetic,1,2026-04-01T11:00:00Z,"{""category_id"": 3}"',
+                        '6,chat_message_sent,2,s2,11,help,synthetic,1,2026-04-01T11:01:00Z,"{""category_id"": 3}"',
+                        '7,checkout_started,2,s2,11,,synthetic,4,2026-04-01T11:02:00Z,"{""category_id"": 3}"',
+                        '8,order_paid,2,s2,11,,synthetic,6,2026-04-01T11:03:00Z,"{""category_id"": 3}"',
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            bundle = build_sequence_artifacts(csv_path, max_sequence_length=4, prediction_horizon=2, min_history=2)
+            self.assertGreater(bundle["stats"]["sample_count"], 0)
+            output_dir = Path(tmp_dir) / "exercise_sequence"
+            save_sequence_artifacts(output_dir, bundle)
+
+            self.assertTrue((output_dir / "train.npz").exists())
+            self.assertTrue((output_dir / "protocol.json").exists())
+            self.assertTrue((output_dir / "preprocess_config.json").exists())
+
+
+class ExerciseSequenceTrainingTest(TestCase):
+    def test_train_exercise_sequence_models_writes_outputs(self):
+        from recommendations.exercise_sequence_models import train_model, save_model_artifacts
+
+        preprocess_config = {
+            "action_vocab": {"PAD": 0, "view": 1, "click": 2, "add_to_cart": 3, "purchase": 4},
+            "product_id_scale": 20,
+            "category_id_scale": 5,
+            "time_delta_hours_clip": 48,
+            "session_position_clip": 10,
+        }
+        train_payload = {
+            "action_ids": np.asarray([[0, 1, 2, 3], [0, 1, 1, 0], [0, 1, 2, 4]], dtype=np.int64),
+            "product_ids": np.asarray([[0, 10, 10, 10], [0, 11, 12, 0], [0, 10, 10, 10]], dtype=np.int64),
+            "category_ids": np.asarray([[0, 2, 2, 2], [0, 3, 3, 0], [0, 2, 2, 2]], dtype=np.int64),
+            "time_delta_hours": np.asarray([[0, 2, 1, 0], [0, 5, 2, 0], [0, 3, 1, 0]], dtype=np.float64),
+            "session_positions": np.asarray([[0, 1, 2, 3], [0, 1, 2, 0], [0, 1, 2, 3]], dtype=np.float64),
+            "mask": np.asarray([[0, 1, 1, 1], [0, 1, 1, 0], [0, 1, 1, 1]], dtype=np.float64),
+            "labels": np.asarray([1, 0, 1], dtype=np.float64),
+        }
+        valid_payload = {
+            key: np.array(value[:2], copy=True)
+            for key, value in train_payload.items()
+        }
+        test_payload = {
+            key: np.array(value[1:], copy=True)
+            for key, value in train_payload.items()
+        }
+
+        with TemporaryDirectory() as tmp_dir:
+            model, metrics = train_model(
+                train_payload,
+                valid_payload,
+                test_payload,
+                preprocess_config,
+                model_type="rnn",
+                hidden_dim=8,
+                epochs=2,
+                learning_rate=0.01,
+            )
+            save_model_artifacts(
+                Path(tmp_dir) / "rnn",
+                model_type="rnn",
+                model=model,
+                metrics=metrics,
+                config={"model_type": "rnn", "epochs": 2},
+            )
+
+            self.assertIn("valid", metrics)
+            self.assertTrue((Path(tmp_dir) / "rnn" / "weights.npz").exists())
+            self.assertTrue((Path(tmp_dir) / "rnn" / "loss_curve.svg").exists())

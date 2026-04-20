@@ -2,6 +2,7 @@ from unittest.mock import Mock, patch
 
 from django.test import TestCase
 from django.utils import timezone
+from django.core.management import call_command
 from rest_framework.test import APIRequestFactory
 
 from .graph_views import KnowledgeGraphViewSet
@@ -152,3 +153,53 @@ class InteractionEventFlowTest(TestCase):
         self.assertEqual(forbidden_response.status_code, 403)
         self.assertEqual(allowed_response.status_code, 200)
         self.assertEqual(allowed_response.data["synced_products"], 2)
+
+
+class ExerciseBehaviorExportTest(TestCase):
+    def test_submission_export_writes_quality_report(self):
+        InteractionEvent.objects.create(
+            event_type="product_viewed",
+            user_id=1,
+            session_id="sess-1",
+            product_id=10,
+            source="synthetic-exercise",
+            timestamp=timezone.now(),
+            metadata={"category_id": 5},
+        )
+        InteractionEvent.objects.create(
+            event_type="search_performed",
+            user_id=2,
+            session_id="sess-2",
+            query_text="keyboard",
+            source="synthetic-exercise",
+            timestamp=timezone.now(),
+            metadata={},
+        )
+
+        from tempfile import TemporaryDirectory
+        from pathlib import Path
+        import json
+
+        with TemporaryDirectory() as tmp_dir:
+            csv_path = Path(tmp_dir) / "data_user500.csv"
+            report_path = Path(tmp_dir) / "data_user500_quality_report.json"
+            call_command(
+                "export_behavior_csv",
+                "--output",
+                str(csv_path),
+                "--source",
+                "synthetic-exercise",
+                "--user-count",
+                "0",
+                "--mode",
+                "submission",
+                "--quality-report",
+                str(report_path),
+            )
+
+            self.assertTrue(csv_path.exists())
+            self.assertTrue(report_path.exists())
+            payload = json.loads(report_path.read_text(encoding="utf-8"))
+            self.assertEqual(payload["distinct_user_count"], 2)
+            self.assertIn("view", payload["action_distribution"])
+            self.assertIn("search", payload["action_distribution"])
