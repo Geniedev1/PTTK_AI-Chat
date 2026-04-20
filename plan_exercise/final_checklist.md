@@ -28,13 +28,13 @@
 
 ## Graph and chat evidence
 
-- [ ] Graph status output
-- [ ] Query demo output
-- [ ] Chat transcript with `used_graph_context=true`
+- [x] Graph status output
+- [x] Query demo output
+- [x] Chat transcript with `used_graph_context=true`
 
 ## UI and defense
 
 - [ ] Recommendation screenshots
 - [ ] Chat UI screenshots
-- [ ] Demo script
-- [ ] Defense summary
+- [x] Demo script
+- [x] Defense summary

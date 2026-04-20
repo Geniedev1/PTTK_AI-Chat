@@ -1,0 +1,35 @@
+{
+  "feature_version": "exercise-sequence-v1",
+  "positive_actions": [
+    "add_to_cart",
+    "checkout",
+    "purchase"
+  ],
+  "sequence_unit": "actor_history_window",
+  "stats": {
+    "actor_count": 500,
+    "positive_count": 18573,
+    "positive_rate": 0.693385,
+    "sample_count": 26786,
+    "sequence_length_summary": {
+      "avg": 10.9733,
+      "max": 12,
+      "min": 2
+    },
+    "split": {
+      "actor_count": 500,
+      "actor_split_counts": {
+        "test": 75,
+        "train": 350,
+        "valid": 75
+      },
+      "sample_split_counts": {
+        "test": 4066,
+        "train": 18696,
+        "valid": 4024
+      },
+      "split_method": "actor_time_bucket"
+    }
+  },
+  "task": "binary_purchase_intent_from_behavior_sequence"
+}

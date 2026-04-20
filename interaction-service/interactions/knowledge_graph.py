@@ -118,7 +118,16 @@ class KnowledgeGraphStore:
         return self._safe_execute(_query_status, {"enabled": True, "connected": False})
 
     def clear_graph(self):
-        return self._safe_execute(lambda: self._run("MATCH (n) DETACH DELETE n"), [])
+        def _clear():
+            self._run("MATCH (n) DETACH DELETE n")
+            self._run("CREATE INDEX product_id_index IF NOT EXISTS FOR (p:Product) ON (p.product_id)")
+            self._run("CREATE INDEX category_id_index IF NOT EXISTS FOR (c:Category) ON (c.category_id)")
+            self._run("CREATE INDEX brand_id_index IF NOT EXISTS FOR (b:Brand) ON (b.brand_id)")
+            self._run("CREATE INDEX user_id_index IF NOT EXISTS FOR (u:Actor) ON (u.user_id)")
+            self._run("CREATE INDEX session_id_index IF NOT EXISTS FOR (s:Actor) ON (s.session_id)")
+            self._run("CREATE INDEX query_text_index IF NOT EXISTS FOR (q:Query) ON (q.text)")
+            return []
+        return self._safe_execute(_clear, [])
 
     def sync_product_catalog(self, products, categories):
         if not self.enabled:

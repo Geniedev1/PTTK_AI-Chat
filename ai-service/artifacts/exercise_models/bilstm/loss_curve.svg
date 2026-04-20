@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="320" viewBox="0 0 720 320">
+<rect width="720" height="320" fill="#fffdf7"/>
+<text x="40" y="24" font-size="18" font-family="Arial" fill="#1c1c1c">BILSTM loss</text>
+<line x1="40" y1="280" x2="680" y2="280" stroke="#666"/>
+<line x1="40" y1="40" x2="40" y2="280" stroke="#666"/>
+<polyline fill="none" stroke="#005f73" stroke-width="3" points="40.0,55.0 131.4,173.0 222.9,151.7 314.3,258.2 405.7,269.1 497.1,274.3 588.6,277.9 680.0,280.0"/>
+<polyline fill="none" stroke="#ca6702" stroke-width="3" points="40.0,40.0 131.4,160.9 222.9,157.4 314.3,242.7 405.7,253.5 497.1,258.0 588.6,258.1 680.0,258.4"/>
+<text x="550" y="40" font-size="12" font-family="Arial" fill="#005f73">train_loss</text>
+<text x="550" y="58" font-size="12" font-family="Arial" fill="#ca6702">valid_loss</text>
+</svg>

@@ -1,0 +1,13 @@
+{
+  "action_vocab": {
+    "PAD": 0,
+    "add_to_cart": 3,
+    "chat": 8,
+    "checkout": 5,
+    "click": 2,
+    "purchase": 6,
+    "remove_from_cart": 4,
+    "search": 7,
+    "view": 1
+  }
+}

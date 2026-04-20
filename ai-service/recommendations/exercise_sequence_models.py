@@ -513,8 +513,7 @@ def save_model_artifacts(output_dir, *, model_type, model, metrics, config):
     for key, value in state.items():
         if isinstance(value, dict):
             for subkey, subvalue in value.items():
-                for inner_key, inner_val in subvalue.items():
-                    arrays[f"{key}_{subkey}_{inner_key}"] = inner_val
+                arrays[f"{key}_{subkey}"] = subvalue
         else:
             arrays[key] = value
     np.savez(output_path / "weights.npz", **arrays)
