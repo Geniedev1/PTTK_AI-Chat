@@ -4,13 +4,17 @@ import type {
   AiRecommendResponse,
   CartItem,
   CartSummary,
+  CreatePaymentPayload,
   CreateOrderResponse,
+  CreateShipmentPayload,
   CustomerLoginResponse,
   CustomerProfile,
   CustomerProfileUpdatePayload,
   CustomerRegisterPayload,
   Order,
+  Payment,
   Product,
+  Shipment,
 } from "../types/api"
 import { httpClient } from "./httpClient"
 
@@ -97,6 +101,79 @@ export const orderApi = {
   },
   create: async (payload: { customer_id?: number; clear_cart?: boolean }): Promise<CreateOrderResponse> => {
     const { data } = await httpClient.post<CreateOrderResponse>(endpoints.orders.create, payload)
+    return data
+  },
+}
+
+export const paymentApi = {
+  list: async (params?: { customer_id?: number; session_key?: string }): Promise<Payment[]> => {
+    const { data } = await httpClient.get<Payment[]>(endpoints.payments.list, { params })
+    return data
+  },
+  detail: async (paymentId: number, params?: { customer_id?: number; session_key?: string }): Promise<Payment> => {
+    const { data } = await httpClient.get<Payment>(endpoints.payments.detail(paymentId), { params })
+    return data
+  },
+  create: async (payload: CreatePaymentPayload): Promise<Payment> => {
+    const { data } = await httpClient.post<Payment>(endpoints.payments.create, payload)
+    return data
+  },
+  confirm: async (paymentId: number): Promise<Payment> => {
+    const { data } = await httpClient.post<Payment>(endpoints.payments.confirm(paymentId))
+    return data
+  },
+  fail: async (paymentId: number, failure_reason?: string): Promise<Payment> => {
+    const { data } = await httpClient.post<Payment>(endpoints.payments.fail(paymentId), { failure_reason })
+    return data
+  },
+  cancel: async (paymentId: number): Promise<Payment> => {
+    const { data } = await httpClient.post<Payment>(endpoints.payments.cancel(paymentId))
+    return data
+  },
+  refund: async (paymentId: number): Promise<Payment> => {
+    const { data } = await httpClient.post<Payment>(endpoints.payments.refund(paymentId))
+    return data
+  },
+}
+
+export const shippingApi = {
+  listShipments: async (params?: {
+    customer_id?: number
+    session_key?: string
+    tracking_number?: string
+  }): Promise<Shipment[]> => {
+    const { data } = await httpClient.get<Shipment[]>(endpoints.shipping.shipments, { params })
+    return data
+  },
+  shipmentDetail: async (
+    shipmentId: number,
+    params?: { customer_id?: number; session_key?: string; tracking_number?: string },
+  ): Promise<Shipment> => {
+    const { data } = await httpClient.get<Shipment>(endpoints.shipping.shipmentDetail(shipmentId), { params })
+    return data
+  },
+  createShipment: async (payload: CreateShipmentPayload): Promise<Shipment> => {
+    const { data } = await httpClient.post<Shipment>(endpoints.shipping.shipments, payload)
+    return data
+  },
+  markReady: async (shipmentId: number): Promise<Shipment> => {
+    const { data } = await httpClient.post<Shipment>(endpoints.shipping.markReady(shipmentId))
+    return data
+  },
+  ship: async (shipmentId: number): Promise<Shipment> => {
+    const { data } = await httpClient.post<Shipment>(endpoints.shipping.ship(shipmentId))
+    return data
+  },
+  deliver: async (shipmentId: number): Promise<Shipment> => {
+    const { data } = await httpClient.post<Shipment>(endpoints.shipping.deliver(shipmentId))
+    return data
+  },
+  cancel: async (shipmentId: number): Promise<Shipment> => {
+    const { data } = await httpClient.post<Shipment>(endpoints.shipping.cancel(shipmentId))
+    return data
+  },
+  fail: async (shipmentId: number, failure_reason?: string): Promise<Shipment> => {
+    const { data } = await httpClient.post<Shipment>(endpoints.shipping.fail(shipmentId), { failure_reason })
     return data
   },
 }

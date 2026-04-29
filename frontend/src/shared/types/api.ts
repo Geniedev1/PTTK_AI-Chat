@@ -119,6 +119,70 @@ export type CreateOrderResponse = {
   cart_cleared: boolean
 }
 
+export type Payment = {
+  id: number
+  order_id: number
+  customer_id: number | null
+  session_key: string | null
+  amount: string
+  currency: string
+  provider: string
+  provider_reference: string
+  status: "PENDING" | "PROCESSING" | "PAID" | "FAILED" | "CANCELLED" | "REFUNDED"
+  failure_reason: string
+  idempotency_key: string | null
+  paid_at: string | null
+  failed_at: string | null
+  cancelled_at: string | null
+  refunded_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type CreatePaymentPayload = {
+  order_id: number
+  customer_id?: number
+  session_key?: string
+  currency?: string
+  provider?: string
+  idempotency_key?: string
+}
+
+export type Shipment = {
+  id: number
+  order_id: number
+  customer_id: number | null
+  session_key: string | null
+  recipient_name: string
+  phone: string
+  address: string
+  city: string
+  country: string
+  carrier: string
+  tracking_number: string
+  shipping_fee: string
+  status: "PENDING" | "READY_TO_SHIP" | "SHIPPED" | "DELIVERED" | "FAILED" | "CANCELLED"
+  failure_reason: string
+  shipped_at: string | null
+  delivered_at: string | null
+  cancelled_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type CreateShipmentPayload = {
+  order_id: number
+  customer_id?: number
+  session_key?: string
+  recipient_name: string
+  phone: string
+  address: string
+  city?: string
+  country?: string
+  carrier?: string
+  shipping_fee?: string
+}
+
 export type AiRecommendationProduct = {
   id: number
   name: string

@@ -326,7 +326,12 @@ class ChatbotService:
         if self._is_greeting_message(normalized_message):
             profile_snapshot = self._build_profile_snapshot({}, user_id=user_id, session_id=session_id)
             return {
-                "answer": self._fallback_answer(normalized_message, {"sources": [], "graph_context": []}),
+                "answer": self._generate_greeting_answer(
+                    normalized_message,
+                    profile_snapshot=profile_snapshot,
+                    user_id=user_id,
+                    session_id=session_id,
+                ),
                 "sources": [],
                 "used_realtime_api": False,
                 "used_graph_context": False,
@@ -343,7 +348,11 @@ class ChatbotService:
         )
 
         if self._should_use_general_answer(normalized_message, retrieval):
-            general_answer = self._generate_general_answer(normalized_message)
+            general_answer = self._generate_general_answer(
+                normalized_message,
+                user_id=user_id,
+                session_id=session_id,
+            )
             if general_answer:
                 return {
                     "answer": general_answer,
@@ -362,7 +371,12 @@ class ChatbotService:
                 "profile_snapshot": retrieval["profile_snapshot"],
             }
 
-        answer = self._generate_grounded_answer(normalized_message, retrieval)
+        answer = self._generate_grounded_answer(
+            normalized_message,
+            retrieval,
+            user_id=user_id,
+            session_id=session_id,
+        )
         return {
             "answer": answer,
             "sources": retrieval["sources"],
@@ -429,14 +443,25 @@ class ChatbotService:
     def _route_realtime(self, message, *, user_id=None, session_id=None, customer_id=None, product_id=None, order_id=None):
         lowered = self._normalize_text(message)
         if self._is_order_status_question(lowered, order_id=order_id):
-            return self._answer_order_status(customer_id=customer_id, session_id=session_id, order_id=order_id)
+            return self._answer_order_status(
+                message=message,
+                user_id=user_id,
+                customer_id=customer_id,
+                session_id=session_id,
+                order_id=order_id,
+            )
         if self._contains_any(lowered, CART_KEYWORDS):
-            return self._answer_cart_status(session_id=session_id)
+            return self._answer_cart_status(message=message, user_id=user_id, session_id=session_id)
         if self._contains_any(lowered, PRICE_KEYWORDS) or self._contains_any(lowered, STOCK_KEYWORDS):
-            return self._answer_product_runtime(lowered, product_id=product_id)
+            return self._answer_product_runtime(
+                message,
+                user_id=user_id,
+                session_id=session_id,
+                product_id=product_id,
+            )
         return None
 
-    def _answer_order_status(self, *, customer_id=None, session_id=None, order_id=None):
+    def _answer_order_status(self, message, *, user_id=None, customer_id=None, session_id=None, order_id=None):
         order = self.order_client.fetch_order(order_id=order_id, customer_id=customer_id, session_id=session_id)
         if not order:
             answer = "I could not find an order in the current scope. Provide `order_id`, or send `customer_id` or `session_id` so I can check the latest order."
@@ -453,8 +478,21 @@ class ChatbotService:
         total_amount = order.get("total_amount")
         item_count = len(order.get("items", []))
         answer = f"Order #{order_identifier} is currently `{status_text}`. Total amount is {total_amount} with {item_count} item(s)."
+        facts = {
+            "order_id": order_identifier,
+            "status": status_text,
+            "total_amount": total_amount,
+            "item_count": item_count,
+        }
         return {
-            "answer": answer,
+            "answer": self._naturalize_realtime_answer(
+                message=message,
+                fallback_answer=answer,
+                facts=facts,
+                scope_label="order status",
+                user_id=user_id,
+                session_id=session_id,
+            ),
             "sources": [
                 {
                     "source_type": "realtime_order",
@@ -468,7 +506,7 @@ class ChatbotService:
             "retrieval_mode": "realtime-order",
         }
 
-    def _answer_cart_status(self, *, session_id=None):
+    def _answer_cart_status(self, message, *, user_id=None, session_id=None):
         if not session_id:
             return {
                 "answer": "I need `session_id` to inspect the current cart.",
@@ -484,8 +522,21 @@ class ChatbotService:
             f"{cart.get('total_quantity', 0)} total unit(s), "
             f"and subtotal {cart.get('subtotal_amount', '0.00')}."
         )
+        facts = {
+            "session_id": session_id,
+            "item_count": cart.get("item_count", 0),
+            "total_quantity": cart.get("total_quantity", 0),
+            "subtotal_amount": cart.get("subtotal_amount", "0.00"),
+        }
         return {
-            "answer": answer,
+            "answer": self._naturalize_realtime_answer(
+                message=message,
+                fallback_answer=answer,
+                facts=facts,
+                scope_label="cart summary",
+                user_id=user_id,
+                session_id=session_id,
+            ),
             "sources": [
                 {
                     "source_type": "realtime_cart",
@@ -505,7 +556,7 @@ class ChatbotService:
             "retrieval_mode": "realtime-cart",
         }
 
-    def _answer_product_runtime(self, message, *, product_id=None):
+    def _answer_product_runtime(self, message, *, user_id=None, session_id=None, product_id=None):
         products = self.product_client.fetch_products()
         product = self._resolve_product(products, explicit_product_id=product_id, message=message)
         if not product:
@@ -529,9 +580,25 @@ class ChatbotService:
             in_stock = "in stock" if runtime_product.get("has_stock") else "currently out of stock"
             segments.append(in_stock)
         answer = ", ".join(segments) + "."
+        facts = {
+            "product_id": product_id,
+            "product_name": runtime_product.get("name"),
+            "base_price": runtime_product.get("base_price"),
+            "stock": runtime_product.get("stock"),
+            "has_stock": runtime_product.get("has_stock"),
+            "user_asked_price": wants_price,
+            "user_asked_stock": wants_stock,
+        }
 
         return {
-            "answer": answer,
+            "answer": self._naturalize_realtime_answer(
+                message=message,
+                fallback_answer=answer,
+                facts=facts,
+                scope_label="product runtime lookup",
+                user_id=user_id,
+                session_id=session_id,
+            ),
             "sources": [
                 {
                     "source_type": "realtime_product",
@@ -666,14 +733,22 @@ class ChatbotService:
     def _build_profile_snapshot(self, products, *, user_id=None, session_id=None):
         return self.profile_builder.build(products, user_id=user_id, session_id=session_id)
 
-    def _generate_grounded_answer(self, message, retrieval):
-        prompt = self._build_prompt(message, retrieval)
+    def _generate_grounded_answer(self, message, retrieval, *, user_id=None, session_id=None):
+        prompt = self._build_prompt(
+            message,
+            retrieval,
+            conversation_history=self._recent_chat_history(
+                user_id=user_id,
+                session_id=session_id,
+                current_message=message,
+            ),
+        )
         generated = self.openai_client.generate_answer(prompt=prompt, question=message)
         if generated:
             return generated
         return self._fallback_answer(message, retrieval)
 
-    def _build_prompt(self, message, retrieval):
+    def _build_prompt(self, message, retrieval, *, conversation_history=None):
         source_lines = []
         for index, source in enumerate(retrieval["sources"], start=1):
             source_lines.append(
@@ -683,12 +758,19 @@ class ChatbotService:
         for row in retrieval["graph_context"]:
             graph_lines.append(f"- {row['type']}: {row['label']} (score={row['score']})")
         profile_lines = self._behavioral_profile_lines(retrieval.get("profile_snapshot") or {})
+        history_lines = self._conversation_history_lines(conversation_history or [])
 
         return (
-            "You are an e-commerce assistant. Use only the provided context. "
-            "Do not invent current price, stock, or order status unless it came from realtime API data. "
-            "If the context is insufficient, say so clearly. Keep the answer concise and factual.\n\n"
+            "You are a warm and natural-sounding e-commerce assistant for a Vietnamese storefront. "
+            "Answer in the same language as the user, and prefer natural Vietnamese with diacritics when the user writes Vietnamese. "
+            "Use only the provided context for factual claims. "
+            "Do not invent current price, stock, cart state, or order status unless it came from realtime API data. "
+            "If the context is insufficient, say what is missing and ask one short follow-up question. "
+            "Be helpful, clear, and conversational without sounding robotic.\n\n"
             f"Question: {message}\n\n"
+            "Recent conversation:\n"
+            + ("\n".join(history_lines) if history_lines else "No prior conversation.")
+            + "\n\n"
             "Retrieved context:\n"
             + ("\n".join(source_lines) if source_lines else "No retrieved context.")
             + "\n\nGraph context:\n"
@@ -697,14 +779,73 @@ class ChatbotService:
             + ("\n".join(profile_lines) if profile_lines else "No behavioral profile.")
         )
 
-    def _generate_general_answer(self, message):
+    def _generate_general_answer(self, message, *, user_id=None, session_id=None):
+        history_lines = self._conversation_history_lines(
+            self._recent_chat_history(
+                user_id=user_id,
+                session_id=session_id,
+                current_message=message,
+            )
+        )
         prompt = (
-            "You are a concise and practical shopping assistant. "
-            "Answer in the same language as the user. "
-            "If the request is broad, provide a useful structure and ask one clear follow-up question. "
-            "Do not invent realtime values such as exact stock, order status, or current price unless explicitly provided by APIs."
+            "You are a warm, natural-sounding shopping assistant. "
+            "Answer in the same language as the user, and prefer natural Vietnamese with diacritics when the user writes Vietnamese. "
+            "If the request is broad, first give a helpful answer, then ask one short follow-up question. "
+            "Do not invent realtime values such as exact stock, order status, or current price unless they were explicitly provided by APIs.\n\n"
+            "Recent conversation:\n"
+            + ("\n".join(history_lines) if history_lines else "No prior conversation.")
         )
         return self.openai_client.generate_answer(prompt=prompt, question=message)
+
+    def _generate_greeting_answer(self, message, *, profile_snapshot, user_id=None, session_id=None):
+        fallback = self._fallback_answer(message, {"sources": [], "graph_context": []})
+        if not self.openai_client.enabled:
+            return fallback
+
+        prompt = (
+            "You are a warm shopping assistant greeting a user for the first turn. "
+            "Reply in the same language as the user, sounding natural and welcoming. "
+            "Briefly explain the kinds of help you can provide in this store, and invite the user to describe their need. "
+            "Do not invent realtime values or mention hidden system details.\n\n"
+            "Behavioral profile:\n"
+            + (
+                "\n".join(self._behavioral_profile_lines(profile_snapshot))
+                if profile_snapshot
+                else "No behavioral profile."
+            )
+            + "\n\nFallback draft:\n"
+            + fallback
+        )
+        generated = self.openai_client.generate_answer(prompt=prompt, question=message)
+        return generated or fallback
+
+    def _naturalize_realtime_answer(self, *, message, fallback_answer, facts, scope_label, user_id=None, session_id=None):
+        if not self.openai_client.enabled:
+            return fallback_answer
+
+        history_lines = self._conversation_history_lines(
+            self._recent_chat_history(
+                user_id=user_id,
+                session_id=session_id,
+                current_message=message,
+            )
+        )
+        prompt = (
+            "You are a warm and natural-sounding shopping assistant. "
+            "Rewrite the answer in the same language as the user. "
+            "Use only the provided facts and do not add any new claims, numbers, or promises. "
+            "Keep it concise, clear, and conversational. "
+            "Avoid markdown code formatting and avoid sounding robotic.\n\n"
+            f"Request type: {scope_label}\n"
+            "Recent conversation:\n"
+            + ("\n".join(history_lines) if history_lines else "No prior conversation.")
+            + "\n\nFacts:\n"
+            + json.dumps(facts, ensure_ascii=True)
+            + "\n\nFallback draft:\n"
+            + fallback_answer
+        )
+        generated = self.openai_client.generate_answer(prompt=prompt, question=message)
+        return generated or fallback_answer
 
     def _general_fallback_answer(self):
         return (
@@ -774,6 +915,35 @@ class ChatbotService:
         if retrieval["graph_context"]:
             answer_parts.append(f"Recent graph context suggests interest around {retrieval['graph_context'][0]['label']}.")
         return " ".join(answer_parts)
+
+    def _recent_chat_history(self, *, user_id=None, session_id=None, current_message=None):
+        if user_id is None and not session_id:
+            return []
+
+        raw_events = self.interaction_client.fetch_events(
+            user_id=user_id,
+            session_id=session_id,
+            limit=max(10, getattr(settings, "CHAT_HISTORY_LIMIT", 4) * 3),
+        )
+        current_normalized = self._normalize_text(current_message or "")
+        history = []
+        for row in raw_events:
+            if row.get("event_type") != "chat_message_sent":
+                continue
+            query_text = (row.get("query_text") or "").strip()
+            if not query_text:
+                continue
+            if current_normalized and self._normalize_text(query_text) == current_normalized:
+                continue
+            history.append(query_text)
+
+        if not history:
+            return []
+        limit = getattr(settings, "CHAT_HISTORY_LIMIT", 4)
+        return history[-limit:]
+
+    def _conversation_history_lines(self, messages):
+        return [f"- User: {message}" for message in messages if message]
 
     def _suggest_products(self, *, message, limit=3):
         try:

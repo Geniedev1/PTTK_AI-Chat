@@ -239,6 +239,24 @@ class StubOpenAIClient:
         return None
 
 
+class EnabledStubOpenAIClient:
+    enabled = True
+
+    def __init__(self):
+        self.prompts = []
+
+    def generate_answer(self, *, prompt, question):
+        self.prompts.append({"prompt": prompt, "question": question})
+        if "Request type: order status" in prompt:
+            return "Don hang #99 hien dang o trang thai PAID va tong tien la 149.99 cho 1 san pham."
+        if "Recent conversation:" in prompt and "Retrieved context:" in prompt:
+            return "Chinh sach doi tra cho ban phim cho phep gui yeu cau trong thoi gian quy dinh, va minh co the giai thich them neu ban muon."
+        return "Minh co the ho tro tu van tu nhien hon neu ban noi ro nhu cau mua sam."
+
+    def embed_texts(self, texts):
+        return None
+
+
 class RecommendationServiceTest(TestCase):
     def setUp(self):
         self.service = RecommendationService(
@@ -527,6 +545,39 @@ class ChatbotServiceTest(TestCase):
         self.assertEqual(payload["retrieval_mode"], "general-fallback")
         self.assertEqual(payload["sources"], [])
         self.assertNotIn("Return Policy", payload["answer"])
+
+    def test_chat_realtime_answer_is_naturalized_when_openai_is_enabled(self):
+        service = ChatbotService(
+            product_client=StubProductClient(),
+            order_client=StubOrderClient(),
+            cart_client=StubCartClient(),
+            interaction_client=StubInteractionContextClient(),
+            openai_client=EnabledStubOpenAIClient(),
+        )
+
+        payload = service.chat(
+            message="What is my order status?",
+            session_id="sess-1",
+        )
+
+        self.assertTrue(payload["used_realtime_api"])
+        self.assertEqual(payload["retrieval_mode"], "realtime-order")
+        self.assertIn("Don hang #99", payload["answer"])
+
+    def test_chat_grounded_answer_uses_openai_when_available(self):
+        service = ChatbotService(
+            product_client=StubProductClient(),
+            order_client=StubOrderClient(),
+            cart_client=StubCartClient(),
+            interaction_client=StubInteractionContextClient(),
+            openai_client=EnabledStubOpenAIClient(),
+        )
+
+        payload = service.chat(message="shipping policy", user_id=77)
+
+        self.assertFalse(payload["used_realtime_api"])
+        self.assertEqual(payload["retrieval_mode"], "lexical")
+        self.assertIn("Chinh sach doi tra", payload["answer"])
 
 
 @override_settings(KNOWLEDGE_BASE_DIR=KNOWLEDGE_BASE_DIR)

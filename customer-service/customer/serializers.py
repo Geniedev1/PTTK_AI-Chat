@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from django.db import IntegrityError, transaction
 from django.contrib.auth.models import User
 from .models import Customer
 
@@ -23,15 +24,27 @@ class CustomerRegisterSerializer(serializers.ModelSerializer):
     class Meta:
         model = Customer
         fields = ['username', 'password', 'email', 'phone', 'address', 'city', 'country']
+
+    def validate_username(self, value):
+        username = value.strip()
+        if not username:
+            raise serializers.ValidationError("Username cannot be blank.")
+        if User.objects.filter(username__iexact=username).exists():
+            raise serializers.ValidationError("Username is already taken.")
+        return username
     
     def create(self, validated_data):
         username = validated_data.pop('username')
         password = validated_data.pop('password')
         email = validated_data.pop('email')
-        
-        user = User.objects.create_user(username=username, email=email, password=password)
-        customer = Customer.objects.create(user=user, **validated_data)
-        return customer
+
+        try:
+            with transaction.atomic():
+                user = User.objects.create_user(username=username, email=email, password=password)
+                customer = Customer.objects.create(user=user, **validated_data)
+                return customer
+        except IntegrityError as exc:
+            raise serializers.ValidationError({"username": ["Username is already taken."]}) from exc
 
 class CustomerLoginSerializer(serializers.Serializer):
     username = serializers.CharField()
