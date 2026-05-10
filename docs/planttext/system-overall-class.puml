@@ -1,0 +1,119 @@
+@startuml
+title Overall System - Class Diagram
+skinparam classAttributeIconSize 0
+
+package "Customer Service" {
+  class Customer
+  class CustomerProfile
+  class CustomerAddress
+  class CustomerActivityLog
+  Customer "1" -- "0..1" CustomerProfile
+  Customer "1" -- "*" CustomerAddress
+  Customer "1" -- "*" CustomerActivityLog
+}
+
+package "Staff Service" {
+  class Staff
+  class StaffProfile
+  class StaffRoleAssignment
+  class StaffActivityLog
+  Staff "1" -- "0..1" StaffProfile
+  Staff "1" -- "*" StaffRoleAssignment
+  Staff "1" -- "*" StaffActivityLog
+}
+
+package "Product Service" {
+  class ProductModel
+  class CategoryModel
+  class BrandModel
+  class ProductTypeModel
+  class VariantModel
+  CategoryModel "0..1" -- "*" ProductModel
+  BrandModel "0..1" -- "*" ProductModel
+  ProductTypeModel "0..1" -- "*" ProductModel
+  ProductModel "1" -- "*" VariantModel
+}
+
+package "Cart Service" {
+  class Cart
+  class CartSession
+  class CartSnapshot
+  class CartEvent
+  CartSession "1" .. "*" Cart
+  CartSession "1" .. "*" CartSnapshot
+  CartSession "1" .. "*" CartEvent
+}
+
+package "Order Service" {
+  class Order
+  class OrderItem
+  class OrderStatusHistory
+  class OrderNote
+  Order "1" -- "*" OrderItem
+  Order "1" -- "*" OrderStatusHistory
+  Order "1" -- "*" OrderNote
+}
+
+package "Payment Service" {
+  class Payment
+  class PaymentMethod
+  class PaymentTransaction
+  class PaymentRefund
+  Payment "1" -- "0..1" PaymentMethod
+  Payment "1" -- "*" PaymentTransaction
+  Payment "1" -- "*" PaymentRefund
+}
+
+package "Shipping Service" {
+  class Shipment
+  class ShipmentAddress
+  class ShipmentTrackingEvent
+  class ShippingRate
+  Shipment "1" -- "0..1" ShipmentAddress
+  Shipment "1" -- "*" ShipmentTrackingEvent
+}
+
+package "Interaction Service" {
+  class InteractionEvent
+  class BehaviorProfile
+  class SearchQueryLog
+  class EventAggregate
+  InteractionEvent ..> BehaviorProfile
+  InteractionEvent ..> SearchQueryLog
+  InteractionEvent ..> EventAggregate
+}
+
+package "AI Service" {
+  class RecommendationRequest
+  class RecommendationResult
+  class ChatSession
+  class ChatMessage
+  RecommendationRequest "1" -- "*" RecommendationResult
+  ChatSession "1" -- "*" ChatMessage
+}
+
+Customer ..> Cart : customer_id
+Customer ..> Order : customer_id
+Customer ..> Payment : customer_id
+Customer ..> Shipment : customer_id
+Customer ..> InteractionEvent : user_id
+Customer ..> RecommendationRequest : user_id
+Customer ..> ChatSession : user_id
+
+ProductModel ..> Cart : product_id
+ProductModel ..> OrderItem : product_id snapshot
+ProductModel ..> InteractionEvent : product_id
+ProductModel ..> RecommendationResult : product_id
+
+Cart ..> Order : checkout by session_key
+Order ..> Payment : order_id
+Order ..> Shipment : order_id
+Payment ..> OrderStatusHistory : set order PAID
+Shipment ..> OrderStatusHistory : set order COMPLETED
+
+CartEvent ..> InteractionEvent : emits behavior event
+Order ..> InteractionEvent : emits order event
+Payment ..> InteractionEvent : emits payment event
+Shipment ..> InteractionEvent : emits shipping event
+@enduml
+

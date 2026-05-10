@@ -49,3 +49,56 @@ class Shipment(models.Model):
 
     def __str__(self):
         return f"Shipment #{self.pk} order={self.order_id} status={self.status}"
+
+
+class ShipmentAddress(models.Model):
+    shipment = models.OneToOneField(Shipment, on_delete=models.CASCADE, related_name="delivery_address")
+    recipient_name = models.CharField(max_length=255)
+    phone = models.CharField(max_length=32)
+    address = models.TextField()
+    city = models.CharField(max_length=100, blank=True)
+    country = models.CharField(max_length=100, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"ShipmentAddress shipment={self.shipment_id}"
+
+
+class ShipmentTrackingEvent(models.Model):
+    shipment = models.ForeignKey(Shipment, on_delete=models.CASCADE, related_name="tracking_events")
+    status = models.CharField(max_length=20)
+    location = models.CharField(max_length=255, blank=True)
+    description = models.TextField(blank=True)
+    event_time = models.DateTimeField(auto_now_add=True)
+    metadata = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        ordering = ["-event_time"]
+        indexes = [
+            models.Index(fields=["shipment", "status"]),
+            models.Index(fields=["event_time"]),
+        ]
+
+    def __str__(self):
+        return f"ShipmentTrackingEvent shipment={self.shipment_id} status={self.status}"
+
+
+class ShippingRate(models.Model):
+    carrier = models.CharField(max_length=64)
+    city = models.CharField(max_length=100, blank=True)
+    country = models.CharField(max_length=100, blank=True)
+    base_fee = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    estimated_days_min = models.PositiveIntegerField(default=1)
+    estimated_days_max = models.PositiveIntegerField(default=5)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["carrier", "country", "city"]
+        indexes = [
+            models.Index(fields=["carrier", "country", "city"]),
+        ]
+
+    def __str__(self):
+        return f"{self.carrier} {self.country}/{self.city} - {self.base_fee}"

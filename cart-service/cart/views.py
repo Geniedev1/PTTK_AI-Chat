@@ -8,7 +8,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 
-from .models import Cart
+from .models import Cart, CartEvent, CartSnapshot
 from .serializers import CartSerializer, CartAddSerializer, CartUpdateSerializer
 from .tracking import emit_interaction_event
 
@@ -116,15 +116,35 @@ class CartViewSet(viewsets.GenericViewSet):
             'subtotal_amount': str(subtotal_amount.quantize(Decimal("0.01"))),
         }
 
+    def _record_cart_event(self, *, session_key, event_type, product_id=None, metadata=None):
+        CartEvent.objects.create(
+            session_key=session_key,
+            event_type=event_type,
+            product_id=product_id,
+            metadata=metadata or {},
+        )
+
+    def _record_cart_snapshot(self, session_key, summary):
+        CartSnapshot.objects.create(
+            session_key=session_key,
+            item_count=summary.get("item_count", 0),
+            total_quantity=summary.get("total_quantity", 0),
+            subtotal_amount=summary.get("subtotal_amount", "0.00"),
+            snapshot=summary,
+        )
+
     @action(detail=False, methods=['get'])
     def current(self, request):
         session_key = self._get_or_create_session_key(request)
+        summary = self._cart_summary(session_key)
+        self._record_cart_snapshot(session_key, summary)
+        self._record_cart_event(session_key=session_key, event_type="cart_viewed", metadata=summary)
         emit_interaction_event(
             event_type="cart_viewed",
             session_id=session_key,
-            metadata=self._cart_summary(session_key),
+            metadata=summary,
         )
-        return self._build_response(session_key, self._cart_summary(session_key))
+        return self._build_response(session_key, summary)
     
     @action(detail=False, methods=['post'])
     def add_product(self, request):
@@ -157,6 +177,12 @@ class CartViewSet(viewsets.GenericViewSet):
             product_id=product_id,
             metadata={"quantity": quantity, "price_snapshot": str(price_snapshot) if price_snapshot is not None else None},
         )
+        self._record_cart_event(
+            session_key=session_key,
+            event_type="cart_item_added",
+            product_id=product_id,
+            metadata={"quantity": quantity, "price_snapshot": str(price_snapshot) if price_snapshot is not None else None},
+        )
         return self._build_response(
             session_key,
             serializer.data,
@@ -185,6 +211,12 @@ class CartViewSet(viewsets.GenericViewSet):
             emit_interaction_event(
                 event_type="cart_item_removed",
                 session_id=session_key,
+                product_id=int(product_id),
+                metadata={"removed": True},
+            )
+            self._record_cart_event(
+                session_key=session_key,
+                event_type="cart_item_removed",
                 product_id=int(product_id),
                 metadata={"removed": True},
             )
@@ -224,6 +256,12 @@ class CartViewSet(viewsets.GenericViewSet):
                 product_id=product_id,
                 metadata={"quantity": cart_item.quantity, "price_snapshot": str(cart_item.price_snapshot) if cart_item.price_snapshot is not None else None},
             )
+            self._record_cart_event(
+                session_key=session_key,
+                event_type="cart_item_quantity_updated",
+                product_id=product_id,
+                metadata={"quantity": cart_item.quantity, "price_snapshot": str(cart_item.price_snapshot) if cart_item.price_snapshot is not None else None},
+            )
             return self._build_response(session_key, serializer.data)
         except Cart.DoesNotExist:
             return self._build_response(
@@ -237,4 +275,5 @@ class CartViewSet(viewsets.GenericViewSet):
         """Clear all items from cart"""
         session_key = self._get_or_create_session_key(request)
         Cart.objects.filter(session_key=session_key).delete()
+        self._record_cart_event(session_key=session_key, event_type="cart_cleared")
         return self._build_response(session_key, {'message': 'Cart cleared'}, status.HTTP_200_OK)

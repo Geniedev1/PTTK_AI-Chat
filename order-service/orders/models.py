@@ -57,3 +57,36 @@ class OrderItem(models.Model):
 
     def __str__(self):
         return f"OrderItem order={self.order_id} product={self.product_id}"
+
+
+class OrderStatusHistory(models.Model):
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="status_history")
+    old_status = models.CharField(max_length=20, blank=True)
+    new_status = models.CharField(max_length=20)
+    changed_by = models.CharField(max_length=100, default="system")
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["order", "new_status"]),
+            models.Index(fields=["created_at"]),
+        ]
+
+    def __str__(self):
+        return f"OrderStatusHistory order={self.order_id} {self.old_status}->{self.new_status}"
+
+
+class OrderNote(models.Model):
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="notes")
+    note = models.TextField()
+    created_by = models.CharField(max_length=100, default="system")
+    is_internal = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"OrderNote order={self.order_id}"

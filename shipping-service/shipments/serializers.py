@@ -1,9 +1,12 @@
 from rest_framework import serializers
 
-from .models import Shipment
+from .models import Shipment, ShipmentAddress, ShipmentTrackingEvent, ShippingRate
 
 
 class ShipmentSerializer(serializers.ModelSerializer):
+    delivery_address = serializers.SerializerMethodField()
+    tracking_events = serializers.SerializerMethodField()
+
     class Meta:
         model = Shipment
         fields = [
@@ -24,9 +27,42 @@ class ShipmentSerializer(serializers.ModelSerializer):
             "shipped_at",
             "delivered_at",
             "cancelled_at",
+            "delivery_address",
+            "tracking_events",
             "created_at",
             "updated_at",
         ]
+        read_only_fields = fields
+
+    def get_delivery_address(self, obj):
+        try:
+            address = obj.delivery_address
+        except ShipmentAddress.DoesNotExist:
+            return None
+        return ShipmentAddressSerializer(address).data
+
+    def get_tracking_events(self, obj):
+        return ShipmentTrackingEventSerializer(obj.tracking_events.all()[:10], many=True).data
+
+
+class ShipmentAddressSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ShipmentAddress
+        fields = ["id", "recipient_name", "phone", "address", "city", "country", "created_at"]
+        read_only_fields = fields
+
+
+class ShipmentTrackingEventSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ShipmentTrackingEvent
+        fields = ["id", "status", "location", "description", "event_time", "metadata"]
+        read_only_fields = fields
+
+
+class ShippingRateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ShippingRate
+        fields = ["id", "carrier", "city", "country", "base_fee", "estimated_days_min", "estimated_days_max", "is_active"]
         read_only_fields = fields
 
 

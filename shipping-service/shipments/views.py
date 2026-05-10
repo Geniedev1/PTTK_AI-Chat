@@ -8,7 +8,7 @@ from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
-from .models import Shipment
+from .models import Shipment, ShipmentAddress, ShipmentTrackingEvent
 from .serializers import ShipmentCreateSerializer, ShipmentFailSerializer, ShipmentSerializer
 from .tracking import emit_interaction_event
 
@@ -118,6 +118,12 @@ class ShipmentViewSet(viewsets.GenericViewSet):
             shipment.failure_reason = failure_reason
             update_fields.append("failure_reason")
         shipment.save(update_fields=update_fields)
+        ShipmentTrackingEvent.objects.create(
+            shipment=shipment,
+            status=new_status,
+            description=f"Shipment status changed to {new_status}.",
+            metadata={"failure_reason": failure_reason} if failure_reason else {},
+        )
         return True
 
     def list(self, request):
@@ -172,6 +178,19 @@ class ShipmentViewSet(viewsets.GenericViewSet):
             country=validated.get("country", ""),
             carrier=validated.get("carrier", "mock"),
             shipping_fee=validated.get("shipping_fee", "0.00"),
+        )
+        ShipmentAddress.objects.create(
+            shipment=shipment,
+            recipient_name=shipment.recipient_name,
+            phone=shipment.phone,
+            address=shipment.address,
+            city=shipment.city,
+            country=shipment.country,
+        )
+        ShipmentTrackingEvent.objects.create(
+            shipment=shipment,
+            status=shipment.status,
+            description="Shipment created.",
         )
         emit_interaction_event(event_type="shipment_created", shipment=shipment)
         return Response(ShipmentSerializer(shipment).data, status=status.HTTP_201_CREATED)

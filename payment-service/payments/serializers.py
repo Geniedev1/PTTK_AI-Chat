@@ -1,9 +1,13 @@
 from rest_framework import serializers
 
-from .models import Payment
+from .models import Payment, PaymentMethod, PaymentRefund, PaymentTransaction
 
 
 class PaymentSerializer(serializers.ModelSerializer):
+    method = serializers.SerializerMethodField()
+    transactions = serializers.SerializerMethodField()
+    refunds = serializers.SerializerMethodField()
+
     class Meta:
         model = Payment
         fields = [
@@ -22,9 +26,46 @@ class PaymentSerializer(serializers.ModelSerializer):
             "failed_at",
             "cancelled_at",
             "refunded_at",
+            "method",
+            "transactions",
+            "refunds",
             "created_at",
             "updated_at",
         ]
+        read_only_fields = fields
+
+    def get_method(self, obj):
+        try:
+            method = obj.method
+        except PaymentMethod.DoesNotExist:
+            return None
+        return PaymentMethodSerializer(method).data
+
+    def get_transactions(self, obj):
+        return PaymentTransactionSerializer(obj.transactions.all()[:10], many=True).data
+
+    def get_refunds(self, obj):
+        return PaymentRefundSerializer(obj.refunds.all()[:10], many=True).data
+
+
+class PaymentMethodSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PaymentMethod
+        fields = ["id", "method_type", "provider", "masked_account", "metadata", "created_at"]
+        read_only_fields = fields
+
+
+class PaymentTransactionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PaymentTransaction
+        fields = ["id", "transaction_type", "provider_reference", "amount", "status", "metadata", "created_at"]
+        read_only_fields = fields
+
+
+class PaymentRefundSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PaymentRefund
+        fields = ["id", "amount", "reason", "status", "provider_reference", "created_at"]
         read_only_fields = fields
 
 
@@ -34,6 +75,8 @@ class PaymentCreateSerializer(serializers.Serializer):
     session_key = serializers.CharField(required=False, allow_blank=False, max_length=40)
     currency = serializers.CharField(required=False, max_length=3, default="USD")
     provider = serializers.CharField(required=False, max_length=32, default="mock")
+    method_type = serializers.CharField(required=False, max_length=32, default="mock")
+    masked_account = serializers.CharField(required=False, allow_blank=True, max_length=64)
     idempotency_key = serializers.CharField(required=False, allow_blank=False, max_length=128)
 
     def validate(self, attrs):
@@ -45,3 +88,7 @@ class PaymentCreateSerializer(serializers.Serializer):
 
 class PaymentFailSerializer(serializers.Serializer):
     failure_reason = serializers.CharField(required=False, allow_blank=True, max_length=500)
+
+
+class PaymentRefundRequestSerializer(serializers.Serializer):
+    reason = serializers.CharField(required=False, allow_blank=True, max_length=500)

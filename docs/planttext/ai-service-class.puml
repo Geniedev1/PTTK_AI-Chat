@@ -1,0 +1,57 @@
+@startuml
+title AI Service - Class Diagram
+skinparam classAttributeIconSize 0
+
+class RecommendationRequest {
+  +id
+  +user_id
+  +session_id
+  +strategy
+  +context
+  +created_at
+}
+
+class RecommendationResult {
+  +id
+  +product_id
+  +score
+  +deep_model_score
+  +reason_codes
+  +source_signals
+  +rank_position
+  +created_at
+}
+
+class ChatSession {
+  +id
+  +user_id
+  +session_id
+  +started_at
+  +last_message_at
+  +metadata
+}
+
+class ChatMessage {
+  +id
+  +role
+  +message
+  +retrieval_mode
+  +sources
+  +created_at
+}
+
+class RecommendationService {
+  +recommend_home(user_id, session_id, limit)
+  +recommend_product_detail(product_id, user_id, session_id, limit)
+  +recommend_cart(session_id, user_id, limit)
+  +get_profile_snapshot(user_id, session_id)
+}
+
+RecommendationRequest "1" -- "*" RecommendationResult
+ChatSession "1" -- "*" ChatMessage
+RecommendationService ..> RecommendationRequest
+RecommendationService ..> RecommendationResult
+RecommendationResult ..> ProductModel : product_id
+RecommendationRequest ..> InteractionEvent : user/session signals
+ChatSession ..> Customer : user_id
+@enduml

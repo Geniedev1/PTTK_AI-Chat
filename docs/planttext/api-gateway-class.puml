@@ -1,0 +1,47 @@
+@startuml
+title API Gateway - Class Diagram
+skinparam classAttributeIconSize 0
+
+class ClientRequest {
+  +method
+  +path
+  +headers
+  +body
+}
+
+class GatewayProxyView {
+  +dispatch(request)
+  +resolve_service(path)
+  +forward_request(request, target_url)
+  +copy_response(response)
+}
+
+class ServiceRoute {
+  +path_prefix
+  +service_url
+}
+
+class ServiceResponse {
+  +status_code
+  +headers
+  +body
+}
+
+GatewayProxyView "1" o-- "*" ServiceRoute
+ClientRequest --> GatewayProxyView
+GatewayProxyView --> ServiceResponse
+
+note right of ServiceRoute
+Configured routes:
+/api/customers
+/api/staff
+/api/products
+/api/cart
+/api/orders
+/api/payments
+/api/shipping
+/api/interactions
+/api/ai
+end note
+@enduml
+

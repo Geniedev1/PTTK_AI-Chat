@@ -28,3 +28,41 @@ class CartSession(models.Model):
     
     def __str__(self):
         return f"CartSession - {self.customer_id or self.session_key}"
+
+
+class CartSnapshot(models.Model):
+    session_key = models.CharField(max_length=40, db_index=True)
+    customer_id = models.IntegerField(null=True, blank=True)
+    item_count = models.PositiveIntegerField(default=0)
+    total_quantity = models.PositiveIntegerField(default=0)
+    subtotal_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    snapshot = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['session_key', 'created_at']),
+        ]
+
+    def __str__(self):
+        return f"CartSnapshot - {self.session_key} - {self.subtotal_amount}"
+
+
+class CartEvent(models.Model):
+    session_key = models.CharField(max_length=40, db_index=True)
+    customer_id = models.IntegerField(null=True, blank=True)
+    event_type = models.CharField(max_length=64)
+    product_id = models.IntegerField(null=True, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['session_key', 'event_type']),
+            models.Index(fields=['created_at']),
+        ]
+
+    def __str__(self):
+        return f"CartEvent - {self.event_type} - {self.session_key}"

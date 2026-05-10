@@ -9,7 +9,7 @@ from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
-from .models import Order, OrderItem
+from .models import Order, OrderItem, OrderStatusHistory
 from .serializers import OrderCreateSerializer, OrderSerializer, OrderStatusUpdateSerializer
 from .tracking import emit_interaction_event
 
@@ -134,6 +134,7 @@ class OrderViewSet(viewsets.GenericViewSet):
             return False
 
         timestamp = timezone.now()
+        old_status = order.status
         order.status = new_status
         update_fields = ["status", "updated_at"]
 
@@ -151,6 +152,13 @@ class OrderViewSet(viewsets.GenericViewSet):
             update_fields.append("cancelled_at")
 
         order.save(update_fields=update_fields)
+        if old_status != new_status:
+            OrderStatusHistory.objects.create(
+                order=order,
+                old_status=old_status,
+                new_status=new_status,
+                changed_by="order-service",
+            )
         return True
 
     def _emit_order_item_event(self, order, event_type):
@@ -273,6 +281,13 @@ class OrderViewSet(viewsets.GenericViewSet):
                     OrderItem(order=order, **item)
                     for item in order_items
                 ]
+            )
+            OrderStatusHistory.objects.create(
+                order=order,
+                old_status="",
+                new_status=order.status,
+                changed_by="order-service",
+                metadata={"reason": "order_created"},
             )
 
         cart_cleared = False

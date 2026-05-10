@@ -1,5 +1,5 @@
 from django.conf import settings
-from django.db.models import Count, Q
+from django.db.models import Count, F, Q
 from django.db.models.functions import TruncDate
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -8,7 +8,7 @@ from rest_framework.response import Response
 
 from .constants import EVENT_SIGNAL_WEIGHTS, PRODUCT_INTEREST_EVENTS
 from .knowledge_graph import get_graph_store
-from .models import InteractionEvent
+from .models import BehaviorProfile, EventAggregate, InteractionEvent, SearchQueryLog
 from .serializers import InteractionEventCreateSerializer, InteractionEventSerializer
 
 
@@ -62,6 +62,7 @@ class InteractionEventViewSet(viewsets.GenericViewSet):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         event = serializer.save()
+        self._record_supporting_tables(event)
         if getattr(settings, "GRAPH_SYNC_ON_WRITE", True):
             get_graph_store().sync_interaction_event(
                 {
@@ -76,6 +77,40 @@ class InteractionEventViewSet(viewsets.GenericViewSet):
                 }
             )
         return Response(InteractionEventSerializer(event).data, status=status.HTTP_201_CREATED)
+
+    def _record_supporting_tables(self, event):
+        identity_filter = {}
+        if event.user_id is not None:
+            identity_filter["user_id"] = event.user_id
+        if event.session_id:
+            identity_filter["session_id"] = event.session_id
+        if identity_filter:
+            profile, _ = BehaviorProfile.objects.get_or_create(
+                **identity_filter,
+                defaults={"profile_json": {}, "event_count": 0},
+            )
+            profile.event_count = F("event_count") + 1
+            profile.last_event_at = event.timestamp
+            profile.save(update_fields=["event_count", "last_event_at", "updated_at"])
+
+        if event.event_type == "search_performed" and event.query_text:
+            metadata = event.metadata or {}
+            SearchQueryLog.objects.create(
+                user_id=event.user_id,
+                session_id=event.session_id,
+                query_text=event.query_text,
+                result_count=int(metadata.get("result_count", 0) or 0),
+                product_ids=metadata.get("product_ids", []),
+            )
+
+        aggregate, _ = EventAggregate.objects.get_or_create(
+            metric_name=f"event_type:{event.event_type}",
+            metric_date=event.timestamp.date(),
+            dimension=event.source or "unknown",
+            defaults={"metric_value": 0},
+        )
+        aggregate.metric_value = F("metric_value") + 1
+        aggregate.save(update_fields=["metric_value", "updated_at"])
 
     @action(detail=False, methods=["get"])
     def data_quality(self, request):

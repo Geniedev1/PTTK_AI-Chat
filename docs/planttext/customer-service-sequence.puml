@@ -1,0 +1,37 @@
+@startuml
+title Customer Service - Register, Login, Profile
+actor CustomerUser as User
+participant "API Gateway" as Gateway
+participant "CustomerViewSet" as CustomerAPI
+database "Customer DB" as DB
+participant "TokenAuth" as TokenAuth
+
+== Register ==
+User -> Gateway: POST /api/customers/register
+Gateway -> CustomerAPI: register(data)
+CustomerAPI -> DB: Create User + Customer
+DB --> CustomerAPI: created
+CustomerAPI --> Gateway: 201 registered
+Gateway --> User: 201 registered
+
+== Login ==
+User -> Gateway: POST /api/customers/login
+Gateway -> CustomerAPI: login(username, password)
+CustomerAPI -> TokenAuth: authenticate()
+TokenAuth --> CustomerAPI: user
+CustomerAPI -> DB: get_or_create Token, load Customer
+DB --> CustomerAPI: token + customer
+CustomerAPI --> Gateway: token, customer
+Gateway --> User: token, customer
+
+== Profile ==
+User -> Gateway: GET /api/customers/profile
+Gateway -> CustomerAPI: profile(Token)
+CustomerAPI -> TokenAuth: validate token
+TokenAuth --> CustomerAPI: request.user
+CustomerAPI -> DB: Load Customer by user
+DB --> CustomerAPI: profile data
+CustomerAPI --> Gateway: profile data
+Gateway --> User: profile data
+@enduml
+

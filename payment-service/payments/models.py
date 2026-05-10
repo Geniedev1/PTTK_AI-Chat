@@ -48,3 +48,57 @@ class Payment(models.Model):
 
     def __str__(self):
         return f"Payment #{self.pk} order={self.order_id} status={self.status}"
+
+
+class PaymentMethod(models.Model):
+    payment = models.OneToOneField(Payment, on_delete=models.CASCADE, related_name="method")
+    method_type = models.CharField(max_length=32, default="mock")
+    provider = models.CharField(max_length=32, default="mock")
+    masked_account = models.CharField(max_length=64, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"PaymentMethod payment={self.payment_id} type={self.method_type}"
+
+
+class PaymentTransaction(models.Model):
+    class Type(models.TextChoices):
+        AUTHORIZE = "AUTHORIZE", "Authorize"
+        CAPTURE = "CAPTURE", "Capture"
+        FAIL = "FAIL", "Fail"
+        CANCEL = "CANCEL", "Cancel"
+        REFUND = "REFUND", "Refund"
+
+    payment = models.ForeignKey(Payment, on_delete=models.CASCADE, related_name="transactions")
+    transaction_type = models.CharField(max_length=20, choices=Type.choices)
+    provider_reference = models.CharField(max_length=128, blank=True)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    status = models.CharField(max_length=20)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["payment", "transaction_type"]),
+            models.Index(fields=["provider_reference"]),
+        ]
+
+    def __str__(self):
+        return f"PaymentTransaction payment={self.payment_id} type={self.transaction_type}"
+
+
+class PaymentRefund(models.Model):
+    payment = models.ForeignKey(Payment, on_delete=models.CASCADE, related_name="refunds")
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    reason = models.TextField(blank=True)
+    status = models.CharField(max_length=20, default=Payment.Status.REFUNDED)
+    provider_reference = models.CharField(max_length=128, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"PaymentRefund payment={self.payment_id} amount={self.amount}"

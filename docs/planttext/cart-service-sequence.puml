@@ -1,0 +1,40 @@
+@startuml
+title Cart Service - Add Product And View Cart
+actor User
+participant "API Gateway" as Gateway
+participant "CartViewSet" as CartAPI
+participant "Product Service" as Product
+database "Cart DB" as CartDB
+participant "Interaction Service" as Interaction
+
+== Add product ==
+User -> Gateway: POST /api/cart/add_product
+Gateway -> CartAPI: add_product(product_id, quantity, X-Cart-Session-Key?)
+CartAPI -> CartAPI: get_or_create session_key
+CartAPI -> Product: GET /api/products/{product_id}
+Product --> CartAPI: product detail, stock, price
+alt product active and has stock
+  CartAPI -> CartDB: create/update Cart item
+  CartDB --> CartAPI: cart item
+  CartAPI -> CartDB: create CartEvent
+  CartAPI -> Interaction: POST cart_item_added
+  Interaction --> CartAPI: 201 event
+  CartAPI --> Gateway: cart item + X-Cart-Session-Key
+  Gateway --> User: cart item
+else unavailable product
+  CartAPI --> Gateway: 400/404 error
+  Gateway --> User: error
+end
+
+== Current cart ==
+User -> Gateway: GET /api/cart/current
+Gateway -> CartAPI: current(X-Cart-Session-Key)
+CartAPI -> CartDB: Load Cart items
+CartDB --> CartAPI: items
+CartAPI -> CartDB: create CartSnapshot + CartEvent
+CartAPI -> Interaction: POST cart_viewed
+Interaction --> CartAPI: 201 event
+CartAPI --> Gateway: cart summary
+Gateway --> User: cart summary
+@enduml
+

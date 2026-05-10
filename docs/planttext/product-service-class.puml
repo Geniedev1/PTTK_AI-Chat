@@ -1,0 +1,58 @@
+@startuml
+title Product Service - Class Diagram
+skinparam classAttributeIconSize 0
+
+class CategoryModel {
+  +id
+  +name
+  +slug
+}
+
+class BrandModel {
+  +id
+  +name
+  +slug
+}
+
+class ProductTypeModel {
+  +id
+  +code
+  +name
+  +description
+}
+
+class ProductModel {
+  +id
+  +name
+  +slug
+  +short_description
+  +description
+  +base_price
+  +stock
+  +attributes
+  +tags
+  +image_urls
+  +is_active
+  +created_at
+  +updated_at
+}
+
+class VariantModel {
+  +id
+  +sku
+  +name
+  +attributes
+  +stock
+  +price_override
+  +is_default
+  +created_at
+  +updated_at
+}
+
+CategoryModel "0..1" -- "*" CategoryModel : parent/children
+CategoryModel "0..1" -- "*" ProductModel
+BrandModel "0..1" -- "*" ProductModel
+ProductTypeModel "0..1" -- "*" ProductModel
+ProductModel "1" -- "*" VariantModel
+@enduml
+

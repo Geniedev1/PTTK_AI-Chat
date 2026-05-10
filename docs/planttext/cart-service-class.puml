@@ -1,0 +1,50 @@
+@startuml
+title Cart Service - Class Diagram
+skinparam classAttributeIconSize 0
+
+class CartSession {
+  +id
+  +session_key
+  +customer_id
+  +created_at
+  +updated_at
+}
+
+class Cart {
+  +id
+  +customer_id
+  +session_key
+  +product_id
+  +quantity
+  +price_snapshot
+  +created_at
+  +updated_at
+}
+
+class CartSnapshot {
+  +id
+  +session_key
+  +customer_id
+  +item_count
+  +total_quantity
+  +subtotal_amount
+  +snapshot
+  +created_at
+}
+
+class CartEvent {
+  +id
+  +session_key
+  +customer_id
+  +event_type
+  +product_id
+  +metadata
+  +created_at
+}
+
+CartSession "1" .. "*" Cart : session_key
+CartSession "1" .. "*" CartSnapshot : session_key
+CartSession "1" .. "*" CartEvent : session_key
+Cart ..> ProductModel : product_id
+CartEvent ..> ProductModel : product_id
+@enduml

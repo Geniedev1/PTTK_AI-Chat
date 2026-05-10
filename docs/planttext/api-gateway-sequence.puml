@@ -1,0 +1,17 @@
+@startuml
+title API Gateway - Core Request Routing
+actor Client
+participant "API Gateway" as Gateway
+participant "Target Service" as Service
+
+Client -> Gateway: HTTP request /api/{service}/...
+Gateway -> Gateway: Match path prefix in SERVICE_ROUTES
+alt route found
+  Gateway -> Service: Forward method, headers, query, body
+  Service --> Gateway: HTTP response
+  Gateway --> Client: Relay status, headers, body
+else route not found
+  Gateway --> Client: 404 Not Found
+end
+@enduml
+

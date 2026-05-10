@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import Order, OrderItem
+from .models import Order, OrderItem, OrderNote, OrderStatusHistory
 
 
 class OrderItemSerializer(serializers.ModelSerializer):
@@ -19,6 +19,8 @@ class OrderItemSerializer(serializers.ModelSerializer):
 
 class OrderSerializer(serializers.ModelSerializer):
     items = OrderItemSerializer(many=True, read_only=True)
+    status_history = serializers.SerializerMethodField()
+    notes = serializers.SerializerMethodField()
     purchase_succeeded = serializers.SerializerMethodField()
     purchase_event = serializers.SerializerMethodField()
 
@@ -37,6 +39,8 @@ class OrderSerializer(serializers.ModelSerializer):
             "completed_at",
             "cancelled_at",
             "items",
+            "status_history",
+            "notes",
             "created_at",
             "updated_at",
         ]
@@ -47,6 +51,28 @@ class OrderSerializer(serializers.ModelSerializer):
 
     def get_purchase_event(self, obj):
         return obj.purchase_event()
+
+    def get_status_history(self, obj):
+        rows = obj.status_history.all()[:10]
+        return OrderStatusHistorySerializer(rows, many=True).data
+
+    def get_notes(self, obj):
+        rows = obj.notes.all()[:10]
+        return OrderNoteSerializer(rows, many=True).data
+
+
+class OrderStatusHistorySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = OrderStatusHistory
+        fields = ["id", "old_status", "new_status", "changed_by", "metadata", "created_at"]
+        read_only_fields = fields
+
+
+class OrderNoteSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = OrderNote
+        fields = ["id", "note", "created_by", "is_internal", "created_at"]
+        read_only_fields = fields
 
 
 class OrderCreateSerializer(serializers.Serializer):

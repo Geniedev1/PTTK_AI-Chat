@@ -8,8 +8,8 @@ from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
-from .models import Payment
-from .serializers import PaymentCreateSerializer, PaymentFailSerializer, PaymentSerializer
+from .models import Payment, PaymentMethod, PaymentRefund, PaymentTransaction
+from .serializers import PaymentCreateSerializer, PaymentFailSerializer, PaymentRefundRequestSerializer, PaymentSerializer
 from .tracking import emit_interaction_event
 
 
@@ -22,6 +22,8 @@ class PaymentViewSet(viewsets.GenericViewSet):
             return PaymentCreateSerializer
         if self.action == "fail":
             return PaymentFailSerializer
+        if self.action == "refund":
+            return PaymentRefundRequestSerializer
         return PaymentSerializer
 
     def _scoped_queryset(self, request):
@@ -118,6 +120,16 @@ class PaymentViewSet(viewsets.GenericViewSet):
         payment.save(update_fields=update_fields)
         return True
 
+    def _record_transaction(self, payment, transaction_type, *, status_value=None, metadata=None):
+        PaymentTransaction.objects.create(
+            payment=payment,
+            transaction_type=transaction_type,
+            provider_reference=payment.provider_reference,
+            amount=payment.amount,
+            status=status_value or payment.status,
+            metadata=metadata or {},
+        )
+
     def list(self, request):
         queryset = self._scoped_queryset(request)
         if queryset is None:
@@ -170,6 +182,13 @@ class PaymentViewSet(viewsets.GenericViewSet):
             provider=validated["provider"],
             idempotency_key=idempotency_key,
         )
+        PaymentMethod.objects.create(
+            payment=payment,
+            method_type=validated.get("method_type", "mock"),
+            provider=payment.provider,
+            masked_account=validated.get("masked_account", ""),
+        )
+        self._record_transaction(payment, PaymentTransaction.Type.AUTHORIZE, status_value=payment.status)
         emit_interaction_event(event_type="payment_started", payment=payment)
         return Response(PaymentSerializer(payment).data, status=status.HTTP_201_CREATED)
 
@@ -186,6 +205,7 @@ class PaymentViewSet(viewsets.GenericViewSet):
         error_response = self._update_order_status(payment, "PAID")
         if error_response:
             return error_response
+        self._record_transaction(payment, PaymentTransaction.Type.CAPTURE, status_value=payment.status)
         emit_interaction_event(event_type="payment_paid", payment=payment)
         return Response(PaymentSerializer(payment).data)
 
@@ -202,6 +222,7 @@ class PaymentViewSet(viewsets.GenericViewSet):
                 {"detail": f"Invalid payment transition from {payment.status} to FAILED."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        self._record_transaction(payment, PaymentTransaction.Type.FAIL, status_value=payment.status, metadata={"failure_reason": reason})
         emit_interaction_event(event_type="payment_failed", payment=payment, metadata={"failure_reason": reason})
         return Response(PaymentSerializer(payment).data)
 
@@ -215,6 +236,7 @@ class PaymentViewSet(viewsets.GenericViewSet):
                 {"detail": f"Invalid payment transition from {payment.status} to CANCELLED."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        self._record_transaction(payment, PaymentTransaction.Type.CANCEL, status_value=payment.status)
         emit_interaction_event(event_type="payment_cancelled", payment=payment)
         return Response(PaymentSerializer(payment).data)
 
@@ -223,10 +245,25 @@ class PaymentViewSet(viewsets.GenericViewSet):
         payment = self.get_queryset().filter(pk=pk).first()
         if not payment:
             return Response({"detail": "Payment not found."}, status=status.HTTP_404_NOT_FOUND)
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
         if not self._transition(payment, Payment.Status.REFUNDED):
             return Response(
                 {"detail": f"Invalid payment transition from {payment.status} to REFUNDED."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        refund = PaymentRefund.objects.create(
+            payment=payment,
+            amount=payment.amount,
+            reason=serializer.validated_data.get("reason", ""),
+            status=payment.status,
+            provider_reference=payment.provider_reference,
+        )
+        self._record_transaction(
+            payment,
+            PaymentTransaction.Type.REFUND,
+            status_value=payment.status,
+            metadata={"refund_id": refund.id, "reason": refund.reason},
+        )
         emit_interaction_event(event_type="payment_refunded", payment=payment)
         return Response(PaymentSerializer(payment).data)

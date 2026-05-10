@@ -1,0 +1,36 @@
+@startuml
+title Staff Service - Staff Auth And Profile
+actor StaffUser as Staff
+participant "API Gateway" as Gateway
+participant "StaffViewSet" as StaffAPI
+database "Staff DB" as DB
+participant "TokenAuth" as TokenAuth
+
+== Register staff ==
+Staff -> Gateway: POST /api/staff/register
+Gateway -> StaffAPI: register(data)
+StaffAPI -> DB: Create User + Staff
+DB --> StaffAPI: created
+StaffAPI --> Gateway: 201 staff registered
+Gateway --> Staff: 201 staff registered
+
+== Login staff ==
+Staff -> Gateway: POST /api/staff/login
+Gateway -> StaffAPI: login(email/password)
+StaffAPI -> TokenAuth: authenticate()
+TokenAuth --> StaffAPI: user
+StaffAPI -> DB: Load Staff + token
+DB --> StaffAPI: staff + token
+StaffAPI --> Gateway: token, staff
+Gateway --> Staff: token, staff
+
+== Me/Profile ==
+Staff -> Gateway: GET /api/staff/me
+Gateway -> StaffAPI: me(Token)
+StaffAPI -> TokenAuth: validate token
+StaffAPI -> DB: Load Staff profile, roles
+DB --> StaffAPI: staff profile
+StaffAPI --> Gateway: staff profile
+Gateway --> Staff: staff profile
+@enduml
+

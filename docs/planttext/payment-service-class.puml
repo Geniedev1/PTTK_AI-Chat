@@ -1,0 +1,59 @@
+@startuml
+title Payment Service - Class Diagram
+skinparam classAttributeIconSize 0
+
+class Payment {
+  +id
+  +order_id
+  +customer_id
+  +session_key
+  +amount
+  +currency
+  +provider
+  +provider_reference
+  +status
+  +failure_reason
+  +idempotency_key
+  +paid_at
+  +failed_at
+  +cancelled_at
+  +refunded_at
+  +created_at
+  +updated_at
+  +can_transition_to(new_status)
+}
+
+class PaymentMethod {
+  +id
+  +method_type
+  +provider
+  +masked_account
+  +metadata
+  +created_at
+}
+
+class PaymentTransaction {
+  +id
+  +transaction_type
+  +provider_reference
+  +amount
+  +status
+  +metadata
+  +created_at
+}
+
+class PaymentRefund {
+  +id
+  +amount
+  +reason
+  +status
+  +provider_reference
+  +created_at
+}
+
+Payment "1" -- "0..1" PaymentMethod
+Payment "1" -- "*" PaymentTransaction
+Payment "1" -- "*" PaymentRefund
+Payment ..> Order : order_id
+Payment ..> Customer : customer_id
+@enduml

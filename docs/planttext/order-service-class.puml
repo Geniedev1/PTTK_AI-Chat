@@ -1,0 +1,53 @@
+@startuml
+title Order Service - Class Diagram
+skinparam classAttributeIconSize 0
+
+class Order {
+  +id
+  +customer_id
+  +session_key
+  +status
+  +total_amount
+  +confirmed_at
+  +paid_at
+  +completed_at
+  +cancelled_at
+  +created_at
+  +updated_at
+  +can_transition_to(new_status)
+  +purchase_succeeded()
+  +purchase_event()
+}
+
+class OrderItem {
+  +id
+  +product_id
+  +product_name_snapshot
+  +price_snapshot
+  +quantity
+  +created_at
+}
+
+class OrderStatusHistory {
+  +id
+  +old_status
+  +new_status
+  +changed_by
+  +metadata
+  +created_at
+}
+
+class OrderNote {
+  +id
+  +note
+  +created_by
+  +is_internal
+  +created_at
+}
+
+Order "1" -- "*" OrderItem
+Order "1" -- "*" OrderStatusHistory
+Order "1" -- "*" OrderNote
+OrderItem ..> ProductModel : product_id snapshot
+Order ..> Customer : customer_id
+@enduml
