@@ -418,6 +418,325 @@ class BiLSTMBinaryClassifier(BaseSequenceClassifier):
         model.b -= learning_rate * db
 
 
+class GRUBinaryClassifier(BaseSequenceClassifier):
+    model_name = "gru"
+
+    def __init__(self, input_dim, hidden_dim=16, seed=42):
+        super().__init__(input_dim=input_dim, hidden_dim=hidden_dim, seed=seed)
+        scale = math.sqrt(1.0 / max(1, input_dim))
+        self.Wz = self.rng.normal(0.0, scale, size=(input_dim, hidden_dim))
+        self.Uz = self.rng.normal(0.0, scale, size=(hidden_dim, hidden_dim))
+        self.bz = np.zeros((hidden_dim,), dtype=np.float64)
+        
+        self.Wr = self.rng.normal(0.0, scale, size=(input_dim, hidden_dim))
+        self.Ur = self.rng.normal(0.0, scale, size=(hidden_dim, hidden_dim))
+        self.br = np.zeros((hidden_dim,), dtype=np.float64)
+        
+        self.Wh = self.rng.normal(0.0, scale, size=(input_dim, hidden_dim))
+        self.Uh = self.rng.normal(0.0, scale, size=(hidden_dim, hidden_dim))
+        self.bh = np.zeros((hidden_dim,), dtype=np.float64)
+
+        self.Wy = self.rng.normal(0.0, scale, size=(hidden_dim, 1))
+        self.by = np.zeros((1,), dtype=np.float64)
+
+    def forward_single(self, x, mask):
+        h = np.zeros((self.hidden_dim,), dtype=np.float64)
+        cache = []
+
+        for step_x, step_mask in zip(x, mask):
+            if step_mask <= 0:
+                cache.append({"mask": 0, "h": np.array(h, copy=True)})
+                continue
+            prev_h = np.array(h, copy=True)
+            z = sigmoid(step_x @ self.Wz + prev_h @ self.Uz + self.bz)
+            r = sigmoid(step_x @ self.Wr + prev_h @ self.Ur + self.br)
+            r_h = r * prev_h
+            h_cand_z = step_x @ self.Wh + r_h @ self.Uh + self.bh
+            h_cand = np.tanh(h_cand_z)
+            h = (1.0 - z) * prev_h + z * h_cand
+            cache.append({
+                "mask": 1, "x": step_x, "prev_h": prev_h,
+                "z": z, "r": r, "r_h": r_h, "h_cand": h_cand, "h": np.array(h, copy=True)
+            })
+
+        logits = float(cache[-1]["h"] @ self.Wy[:, 0] + self.by[0]) if cache else 0.0
+        score = float(sigmoid(logits))
+        return score, cache
+
+    def train_single(self, x, mask, y_true, learning_rate):
+        score, cache = self.forward_single(x, mask)
+        if not cache:
+            return
+
+        dlogit = score - y_true
+        dWy = np.outer(cache[-1]["h"], np.asarray([dlogit]))
+        dby = np.asarray([dlogit])
+
+        dWz = np.zeros_like(self.Wz)
+        dUz = np.zeros_like(self.Uz)
+        dbz = np.zeros_like(self.bz)
+        dWr = np.zeros_like(self.Wr)
+        dUr = np.zeros_like(self.Ur)
+        dbr = np.zeros_like(self.br)
+        dWh = np.zeros_like(self.Wh)
+        dUh = np.zeros_like(self.Uh)
+        dbh = np.zeros_like(self.bh)
+
+        dh_next = dlogit * self.Wy[:, 0]
+
+        for index in range(len(cache) - 1, -1, -1):
+            step = cache[index]
+            if step["mask"] <= 0:
+                continue
+
+            x_t = step["x"]
+            prev_h = step["prev_h"]
+            z = step["z"]
+            r = step["r"]
+            r_h = step["r_h"]
+            h_cand = step["h_cand"]
+
+            dh = dh_next
+            dz = dh * (h_cand - prev_h)
+            dh_cand = dh * z
+            dh_prev_from_h = dh * (1.0 - z)
+
+            dz_in = dz * z * (1.0 - z)
+            dWz += np.outer(x_t, dz_in)
+            dUz += np.outer(prev_h, dz_in)
+            dbz += dz_in
+            dh_prev_from_z = dz_in @ self.Uz.T
+
+            dh_cand_in = dh_cand * (1.0 - h_cand**2)
+            dWh += np.outer(x_t, dh_cand_in)
+            dUh += np.outer(r_h, dh_cand_in)
+            dbh += dh_cand_in
+
+            dr_h = dh_cand_in @ self.Uh.T
+            dr = dr_h * prev_h
+            dh_prev_from_rh = dr_h * r
+
+            dr_in = dr * r * (1.0 - r)
+            dWr += np.outer(x_t, dr_in)
+            dUr += np.outer(prev_h, dr_in)
+            dbr += dr_in
+            dh_prev_from_r = dr_in @ self.Ur.T
+
+            dh_next = dh_prev_from_h + dh_prev_from_z + dh_prev_from_rh + dh_prev_from_r
+
+        self.Wz -= learning_rate * dWz
+        self.Uz -= learning_rate * dUz
+        self.bz -= learning_rate * dbz
+        self.Wr -= learning_rate * dWr
+        self.Ur -= learning_rate * dUr
+        self.br -= learning_rate * dbr
+        self.Wh -= learning_rate * dWh
+        self.Uh -= learning_rate * dUh
+        self.bh -= learning_rate * dbh
+        self.Wy -= learning_rate * dWy
+        self.by -= learning_rate * dby
+
+
+class CNN1DBinaryClassifier(BaseSequenceClassifier):
+    model_name = "cnn1d"
+
+    def __init__(self, input_dim, hidden_dim=16, seed=42):
+        super().__init__(input_dim=input_dim, hidden_dim=hidden_dim, seed=seed)
+        self.window_size = 3
+        scale = math.sqrt(1.0 / max(1, input_dim * self.window_size))
+        self.K = self.rng.normal(0.0, scale, size=(self.window_size, input_dim, hidden_dim))
+        self.b = np.zeros((hidden_dim,), dtype=np.float64)
+
+        scale_y = math.sqrt(1.0 / max(1, hidden_dim))
+        self.Wy = self.rng.normal(0.0, scale_y, size=(hidden_dim, 1))
+        self.by = np.zeros((1,), dtype=np.float64)
+
+    def forward_single(self, x, mask):
+        seq_len = len(x)
+        Z = np.zeros((seq_len, self.hidden_dim), dtype=np.float64)
+        padded_x = np.vstack([np.zeros((self.window_size - 1, self.input_dim)), x])
+        
+        valid_steps = []
+        for t in range(seq_len):
+            if mask[t] <= 0:
+                continue
+            valid_steps.append(t)
+            window = padded_x[t : t + self.window_size]
+            Z[t] = np.tensordot(window, self.K, axes=([0, 1], [0, 1])) + self.b
+            Z[t] = np.maximum(0.0, Z[t])
+
+        if not valid_steps:
+            return 0.5, {"M": np.zeros(self.hidden_dim), "valid_steps": []}
+            
+        valid_Z = Z[valid_steps]
+        M = np.max(valid_Z, axis=0)
+        argmax = np.argmax(valid_Z, axis=0)
+        max_indices = [valid_steps[i] for i in argmax]
+
+        logits = float(M @ self.Wy[:, 0] + self.by[0])
+        score = float(sigmoid(logits))
+
+        return score, {
+            "x": x, "padded_x": padded_x, "Z": Z, "M": M, 
+            "max_indices": max_indices, "valid_steps": valid_steps
+        }
+
+    def train_single(self, x, mask, y_true, learning_rate):
+        score, cache = self.forward_single(x, mask)
+        valid_steps = cache.get("valid_steps", [])
+        if not valid_steps:
+            return
+
+        dlogit = score - y_true
+        M = cache["M"]
+        dWy = np.outer(M, np.asarray([dlogit]))
+        dby = np.asarray([dlogit])
+
+        dM = dlogit * self.Wy[:, 0]
+        max_indices = cache["max_indices"]
+        padded_x = cache["padded_x"]
+        
+        dK = np.zeros_like(self.K)
+        db = np.zeros_like(self.b)
+        
+        for f in range(self.hidden_dim):
+            grad_M_f = dM[f]
+            if grad_M_f == 0:
+                continue
+            best_t = max_indices[f]
+            z_val = cache["Z"][best_t, f]
+            if z_val > 0:
+                db[f] += grad_M_f
+                window = padded_x[best_t : best_t + self.window_size]
+                dK[:, :, f] += window * grad_M_f
+
+        self.K -= learning_rate * dK
+        self.b -= learning_rate * db
+        self.Wy -= learning_rate * dWy
+        self.by -= learning_rate * dby
+
+
+class AttentionBinaryClassifier(BaseSequenceClassifier):
+    model_name = "attention"
+
+    def __init__(self, input_dim, hidden_dim=16, seed=42):
+        super().__init__(input_dim=input_dim, hidden_dim=hidden_dim, seed=seed)
+        scale = math.sqrt(1.0 / max(1, input_dim))
+        self.Wq = self.rng.normal(0.0, scale, size=(input_dim, hidden_dim))
+        self.Wk = self.rng.normal(0.0, scale, size=(input_dim, hidden_dim))
+        self.Wv = self.rng.normal(0.0, scale, size=(input_dim, hidden_dim))
+        
+        self.max_len = 200
+        self.P = self.rng.normal(0.0, 0.01, size=(self.max_len, input_dim))
+        
+        scale_y = math.sqrt(1.0 / max(1, hidden_dim))
+        self.Wy = self.rng.normal(0.0, scale_y, size=(hidden_dim, 1))
+        self.by = np.zeros((1,), dtype=np.float64)
+
+    def forward_single(self, x, mask):
+        seq_len = len(x)
+        valid_steps = [t for t in range(seq_len) if mask[t] > 0]
+        if not valid_steps:
+            return 0.5, {}
+            
+        H = np.zeros_like(x)
+        for t in valid_steps:
+            idx = min(t, self.max_len - 1)
+            H[t] = x[t] + self.P[idx]
+            
+        Q = H @ self.Wq
+        K = H @ self.Wk
+        V = H @ self.Wv
+        
+        scores = Q @ K.T / math.sqrt(self.hidden_dim)
+        
+        causal_mask = np.triu(np.ones((seq_len, seq_len)), k=1)
+        invalid_mask = (mask <= 0).astype(np.float64)
+        
+        scores[causal_mask == 1] = -1e9
+        for i in range(seq_len):
+            scores[i, invalid_mask == 1] = -1e9
+            if invalid_mask[i] == 1:
+                scores[i, :] = -1e9
+                
+        A = np.zeros_like(scores)
+        for i in valid_steps:
+            row = scores[i]
+            max_val = np.max(row)
+            exp_row = np.exp(row - max_val)
+            A[i] = exp_row / np.sum(exp_row)
+            
+        O = A @ V
+        M = np.mean(O[valid_steps], axis=0)
+        
+        logits = float(M @ self.Wy[:, 0] + self.by[0])
+        score = float(sigmoid(logits))
+        
+        return score, {
+            "x": x, "H": H, "Q": Q, "K": K, "V": V, "A": A, "O": O, "M": M, 
+            "valid_steps": valid_steps, "seq_len": seq_len
+        }
+
+    def train_single(self, x, mask, y_true, learning_rate):
+        score, cache = self.forward_single(x, mask)
+        if not cache:
+            return
+            
+        valid_steps = cache["valid_steps"]
+        L_v = len(valid_steps)
+        seq_len = cache["seq_len"]
+        
+        dlogit = score - y_true
+        M = cache["M"]
+        dWy = np.outer(M, np.asarray([dlogit]))
+        dby = np.asarray([dlogit])
+        
+        dM = dlogit * self.Wy[:, 0]
+        
+        dO = np.zeros_like(cache["O"])
+        for t in valid_steps:
+            dO[t] = dM / L_v
+            
+        V = cache["V"]
+        A = cache["A"]
+        
+        dA = dO @ V.T
+        dV = A.T @ dO
+        
+        dscores = np.zeros_like(dA)
+        for i in valid_steps:
+            a_row = A[i]
+            da_row = dA[i]
+            dscores[i] = a_row * (da_row - np.dot(a_row, da_row))
+            
+        Q = cache["Q"]
+        K = cache["K"]
+        
+        dQ = dscores @ K / math.sqrt(self.hidden_dim)
+        dK = dscores.T @ Q / math.sqrt(self.hidden_dim)
+        
+        H = cache["H"]
+        
+        dWq = H.T @ dQ
+        dWk = H.T @ dK
+        dWv = H.T @ dV
+        
+        dH = dQ @ self.Wq.T + dK @ self.Wk.T + dV @ self.Wv.T
+        
+        dP = np.zeros_like(self.P)
+        for t in valid_steps:
+            idx = min(t, self.max_len - 1)
+            dP[idx] += dH[t]
+            
+        self.Wq -= learning_rate * dWq
+        self.Wk -= learning_rate * dWk
+        self.Wv -= learning_rate * dWv
+        self.Wy -= learning_rate * dWy
+        self.by -= learning_rate * dby
+        self.P -= learning_rate * dP
+
+
+
 def _write_line_chart_svg(path, history, key_left, key_right, title):
     width = 720
     height = 320
@@ -474,6 +793,12 @@ def train_model(train_payload, valid_payload, test_payload, preprocess_config, *
         model = LSTMBinaryClassifier(input_dim=input_dim, hidden_dim=hidden_dim, seed=seed)
     elif model_type == "bilstm":
         model = BiLSTMBinaryClassifier(input_dim=input_dim, hidden_dim=hidden_dim, seed=seed)
+    elif model_type == "gru":
+        model = GRUBinaryClassifier(input_dim=input_dim, hidden_dim=hidden_dim, seed=seed)
+    elif model_type == "cnn1d":
+        model = CNN1DBinaryClassifier(input_dim=input_dim, hidden_dim=hidden_dim, seed=seed)
+    elif model_type == "attention":
+        model = AttentionBinaryClassifier(input_dim=input_dim, hidden_dim=hidden_dim, seed=seed)
     else:
         raise ValueError("Unsupported model_type: %s" % model_type)
 

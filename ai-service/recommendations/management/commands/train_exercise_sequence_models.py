@@ -15,7 +15,7 @@ from recommendations.exercise_sequence_models import (
 
 
 class Command(BaseCommand):
-    help = "Train exercise sequence models: RNN, LSTM, biLSTM."
+    help = "Train exercise sequence models: RNN, LSTM, biLSTM, GRU, CNN1D, Attention."
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -54,7 +54,7 @@ class Command(BaseCommand):
             "seed": int(options["seed"]),
         }
 
-        for model_type in ("rnn", "lstm", "bilstm"):
+        for model_type in ("rnn", "lstm", "bilstm", "gru", "cnn1d", "attention"):
             model, metrics = train_model(
                 train_payload,
                 valid_payload,
