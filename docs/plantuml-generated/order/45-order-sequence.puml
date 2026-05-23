@@ -1,0 +1,79 @@
+@startuml 45-order-sequence
+title Order Domain - Sequence Diagram
+
+participant Client
+participant OrderViewSet
+participant CartService
+participant ProductService
+participant InteractionService
+database OrderDB
+
+== Create Order ==
+
+Client -> OrderViewSet : POST /api/orders/\n{customer_id, clear_cart}\nX-Cart-Session-Key: <key>
+OrderViewSet -> OrderViewSet : validate OrderCreateSerializer
+
+alt validation failed
+  OrderViewSet --> Client : 400 Bad Request
+else valid
+  OrderViewSet -> CartService : GET /api/cart/current\nX-Cart-Session-Key: <key>
+  CartService --> OrderViewSet : {session_key, items, subtotal}
+
+  alt cart is empty
+    OrderViewSet --> Client : 400 Cart is empty
+  else cart has items
+    loop for each cart item
+      OrderViewSet -> ProductService : GET /api/products/{product_id}/
+      ProductService --> OrderViewSet : {name, base_price}
+    end
+
+    OrderViewSet -> OrderDB : transaction.atomic()
+    OrderViewSet -> OrderDB : Order.create(status=PENDING, total_amount)
+    OrderDB --> OrderViewSet : order
+    OrderViewSet -> OrderDB : OrderItem.bulk_create(items with snapshots)
+    OrderDB --> OrderViewSet : order items created
+
+    alt clear_cart = True
+      OrderViewSet -> CartService : POST /api/cart/clear
+      CartService --> OrderViewSet : cleared
+    end
+
+    OrderViewSet -> InteractionService : emit order_created event
+    InteractionService --> OrderViewSet : ok
+    OrderViewSet --> Client : 201 {order, cart_cleared}
+  end
+end
+
+== Get Order List ==
+
+Client -> OrderViewSet : GET /api/orders/\n?customer_id=5
+OrderViewSet -> OrderDB : Order.filter(customer_id=5)
+OrderDB --> OrderViewSet : order list
+OrderViewSet --> Client : 200 [orders with items and history]
+
+== Update Order Status (Admin) ==
+
+Client -> OrderViewSet : POST /api/orders/{id}/update_status/\n{status: PAID}\nX-Internal-Admin-Key: <key>
+OrderViewSet -> OrderViewSet : check InternalAdminPermission
+
+alt permission denied
+  OrderViewSet --> Client : 403 Forbidden
+else permitted
+  OrderViewSet -> OrderViewSet : validate OrderStatusUpdateSerializer
+  OrderViewSet -> OrderDB : Order.objects.get(pk=id)
+  OrderDB --> OrderViewSet : order
+
+  alt invalid transition
+    OrderViewSet --> Client : 400 Invalid status transition
+  else valid transition
+    OrderViewSet -> OrderDB : set paid_at = now()
+    OrderViewSet -> OrderDB : order.status = PAID; order.save()
+    OrderViewSet -> OrderDB : OrderStatusHistory.create(old, new)
+    OrderDB --> OrderViewSet : saved
+    OrderViewSet -> InteractionService : emit order_paid event
+    InteractionService --> OrderViewSet : ok
+    OrderViewSet --> Client : 200 Updated order
+  end
+end
+
+@enduml

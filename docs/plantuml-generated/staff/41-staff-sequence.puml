@@ -1,0 +1,71 @@
+@startuml 41-staff-sequence
+title Staff Domain - Sequence Diagram
+
+participant Client
+participant StaffViewSet
+participant StaffRegisterSerializer
+participant StaffLoginSerializer
+database UserDB
+database StaffDB
+database TokenDB
+
+== Register Staff ==
+
+Client -> StaffViewSet : POST /api/staff/register/\n{username, password, email, name, position}
+StaffViewSet -> StaffRegisterSerializer : validate(data)
+StaffRegisterSerializer -> UserDB : check username exists
+UserDB --> StaffRegisterSerializer : not found
+StaffRegisterSerializer --> StaffViewSet : validated_data
+StaffViewSet -> UserDB : User.objects.create_user(username, email, password)
+UserDB --> StaffViewSet : user
+StaffViewSet -> StaffDB : Staff.objects.create(user, name, position)
+StaffDB --> StaffViewSet : staff
+StaffViewSet --> Client : 201 Staff data
+
+== Login Staff ==
+
+Client -> StaffViewSet : POST /api/staff/login/\n{username, password}
+StaffViewSet -> StaffLoginSerializer : validate(data)
+StaffLoginSerializer --> StaffViewSet : validated_data
+StaffViewSet -> UserDB : authenticate(username, password)
+UserDB --> StaffViewSet : user or None
+
+alt user not found or wrong password
+  StaffViewSet --> Client : 401 Invalid credentials
+else user.is_active = False
+  StaffViewSet --> Client : 403 Account disabled
+else success
+  StaffViewSet -> TokenDB : Token.get_or_create(user)
+  TokenDB --> StaffViewSet : (token, created)
+  StaffViewSet --> Client : 200 {token, staff_data}
+end
+
+== Get Me ==
+
+Client -> StaffViewSet : GET /api/staff/me/\nAuthorization: Token <key>
+StaffViewSet -> StaffViewSet : check InternalAdminPermission
+
+alt permission denied
+  StaffViewSet --> Client : 403 Forbidden
+else permitted
+  StaffViewSet -> StaffDB : Staff.objects.select_related(user, profile, roles)
+  StaffDB --> StaffViewSet : staff with relations
+  StaffViewSet --> Client : 200 Staff detail
+end
+
+== Update Profile ==
+
+Client -> StaffViewSet : PUT /api/staff/update_profile/\n{department, bio, avatar_url}
+StaffViewSet -> StaffViewSet : check InternalAdminPermission
+
+alt permission denied
+  StaffViewSet --> Client : 403 Forbidden
+else permitted
+  StaffViewSet -> StaffDB : StaffProfile.get_or_create(staff)
+  StaffDB --> StaffViewSet : profile
+  StaffViewSet -> StaffDB : profile.save(department, bio, avatar_url)
+  StaffDB --> StaffViewSet : updated profile
+  StaffViewSet --> Client : 200 Updated profile
+end
+
+@enduml

@@ -1,0 +1,104 @@
+@startuml 39-interaction-activity
+title Interaction Domain — Activity Diagram
+
+start
+
+:Receive request from Client / Backend Service;
+
+if (Request type?) then (POST create event)
+  :Validate InteractionEventCreateSerializer
+  {event_type, user_id, session_id, product_id,
+  query_text, source, metadata};
+  if (Valid?) then (no)
+    :Return 400;
+    stop
+  endif
+  if (user_id or session_id present?) then (no)
+    :Return 400 Identity required;
+    stop
+  endif
+  :signal_weight = EVENT_SIGNAL_WEIGHTS.get(event_type, 1);
+  :InteractionEvent.objects.create(...);
+  :Upsert BehaviorProfile
+  (event_count++, last_event_at, profile_json);
+  if (event_type == search_performed?) then (yes)
+    :SearchQueryLog.objects.create(query_text, ...);
+  endif
+  :EventAggregate.objects.update_or_create
+  (metric_name, metric_date, dimension);
+  if (GRAPH_SYNC_ON_WRITE == True?) then (yes)
+    :KnowledgeGraphStore.sync_interaction_event(event);
+  endif
+  :Return 201 InteractionEvent data;
+
+elseif (GET list events) then (list)
+  :Read filter params
+  {user_id, session_id, event_type, product_id,
+  date_from, date_to, limit};
+  :Query InteractionEvent queryset;
+  :Return 200 [event list];
+
+elseif (GET data_quality) then (data_quality)
+  :Get all recent events;
+  :Calculate % events with product_id;
+  :Calculate % events with user_id;
+  :Calculate % events with query_text;
+  :Return 200 {completeness metrics};
+
+elseif (GET top_queries) then (top_queries)
+  :Query SearchQueryLog;
+  :Group by query_text, count frequency;
+  :Return 200 [top queries];
+
+elseif (GET product_gaps) then (product_gaps)
+  :Find product_id viewed but not ordered;
+  :Return 200 [product gaps list];
+
+elseif (GET abandoned_carts) then (abandoned_carts)
+  :Find sessions with cart_item_added
+  but no order_created;
+  :Return 200 [abandoned cart sessions];
+
+elseif (GET graph/status) then (graph status)
+  :KnowledgeGraphStore.status();
+  :Return 200 {available, node_counts, ...};
+
+elseif (POST graph/rebuild) then (rebuild graph)
+  :Check X-Internal-Admin-Key;
+  if (Valid?) then (no)
+    :Return 403;
+    stop
+  endif
+  :Call product-service fetch_products();
+  :Call product-service fetch_categories();
+  :KnowledgeGraphStore.clear_graph();
+  :KnowledgeGraphStore.sync_product_catalog(...);
+  :For each interaction event:;
+  :  KnowledgeGraphStore.sync_interaction_event(...);
+  :KnowledgeGraphStore.refresh_similarity_edges();
+  :Return 200 {rebuilt: true, stats};
+
+elseif (GET graph/user_interest) then (user_interest)
+  :Read {user_id or session_id, limit};
+  :KnowledgeGraphStore.user_interest(...);
+  :Return 200 [category interest list];
+
+elseif (GET graph/product_neighbors) then (product_neighbors)
+  :Read {product_id, limit};
+  :KnowledgeGraphStore.product_neighbors(product_id, limit);
+  :Return 200 [similar products list];
+
+elseif (GET graph/query_paths) then (query_paths)
+  :Read {query_text, product_id, limit};
+  :KnowledgeGraphStore.query_paths(...);
+  :Return 200 [matching products list];
+
+else (GET graph/similar_users)
+  :Read {user_id or session_id, limit};
+  :KnowledgeGraphStore.similar_users(...);
+  :Return 200 [similar actors list];
+endif
+
+stop
+
+@enduml

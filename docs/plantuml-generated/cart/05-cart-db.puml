@@ -1,0 +1,102 @@
+@startuml 05-cart-db
+
+skinparam linetype ortho
+skinparam entity {
+  FontStyle bold
+}
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam defaultFontSize 11
+
+entity "cart_cart\n(Cart)" as Cart {
+  * id : INTEGER <<PK, AUTO>>
+  --
+  customer_id : INTEGER <<nullable>>\n(denormalized, no FK - cross-service)
+  session_key : VARCHAR(40) <<nullable, INDEX>>
+  product_id : INTEGER\n(denormalized, no FK - cross-service)
+  quantity : INTEGER [default=1]
+  price_snapshot : DECIMAL(12,2) <<nullable>>
+  created_at : DATETIME
+  updated_at : DATETIME
+  --
+  UNIQUE (session_key, product_id)
+}
+
+entity "cart_cartsession\n(CartSession)" as CartSession {
+  * id : INTEGER <<PK, AUTO>>
+  --
+  session_key : VARCHAR(40) <<UNIQUE>>
+  customer_id : INTEGER <<nullable>>\n(denormalized, no FK - cross-service)
+  created_at : DATETIME
+  updated_at : DATETIME
+}
+
+entity "cart_cartsnapshot\n(CartSnapshot)" as CartSnapshot {
+  * id : INTEGER <<PK, AUTO>>
+  --
+  session_key : VARCHAR(40) <<INDEX>>
+  customer_id : INTEGER <<nullable>>
+  item_count : INTEGER [default=0]
+  total_quantity : INTEGER [default=0]
+  subtotal_amount : DECIMAL(12,2) [default=0]
+  snapshot : JSON [default={}]
+  created_at : DATETIME
+  --
+  INDEX (session_key, created_at)
+}
+
+entity "cart_cartevent\n(CartEvent)" as CartEvent {
+  * id : INTEGER <<PK, AUTO>>
+  --
+  session_key : VARCHAR(40) <<INDEX>>
+  customer_id : INTEGER <<nullable>>
+  event_type : VARCHAR(64)
+  product_id : INTEGER <<nullable>>
+  metadata : JSON [default={}]
+  created_at : DATETIME
+  --
+  INDEX (session_key, event_type)
+  INDEX (created_at)
+}
+
+CartSession ..o{ Cart : "session_key\n(logic link, no DB FK)"
+CartSession ..o{ CartSnapshot : "session_key\n(logic link, no DB FK)"
+CartSession ..o{ CartEvent : "session_key\n(logic link, no DB FK)"
+
+note top of Cart
+  UniqueConstraint: (session_key, product_id)
+  Each session has only 1 row / product.
+  When added again → increase quantity, do not create new.
+end note
+
+note right of CartSession
+  session_key = uuid4().hex[:40]
+  Create new if X-Cart-Session-Key header is empty.
+  Returned via X-Cart-Session-Key header in response.
+end note
+
+note bottom of CartEvent
+  event_type values:
+  - cart_viewed
+  - cart_item_added
+  - cart_item_removed
+  - cart_item_quantity_updated
+  - cart_cleared
+end note
+
+note bottom of CartSnapshot
+  Saves full snapshot JSON at the time of
+  calling GET /api/cart/current.
+  Used for auditing and analysis.
+end note
+
+note as N1
+  Cart Service is stateless based on session_key.
+  No auth - any user can create a cart
+  just with (or without) session_key.
+  Cross-service: product_id, customer_id are
+  pure integers, no physical FK to
+  product-service or customer-service.
+end note
+
+@enduml

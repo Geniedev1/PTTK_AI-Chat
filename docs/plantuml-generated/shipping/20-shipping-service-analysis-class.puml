@@ -1,0 +1,203 @@
+@startuml 20-shipping-service-analysis-class
+
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam defaultFontSize 11
+skinparam class {
+  FontStyle bold
+}
+
+package "Domain Layer\n(Models)" as DOMAIN {
+
+  enum ShipmentStatus <<enum>> {
+    PENDING
+    READY_TO_SHIP
+    SHIPPED
+    DELIVERED
+    FAILED
+    CANCELLED
+  }
+
+  class Shipment <<Entity>> {
+    + id : int <<PK>>
+    + order_id : int <<UNIQUE>> (cross-service)
+    + customer_id : int (nullable, cross-service)
+    + session_key : str (nullable)
+    + recipient_name : str
+    + phone : str
+    + address : text
+    + city : str
+    + country : str
+    + carrier : str
+    + tracking_number : str
+    + shipping_fee : Decimal
+    + status : ShipmentStatus
+    + failure_reason : text
+    + shipped_at : datetime (nullable)
+    + delivered_at : datetime (nullable)
+    + cancelled_at : datetime (nullable)
+    + created_at : datetime
+    + updated_at : datetime
+    --
+    + can_transition_to(new_status) : bool
+  }
+
+  class ShipmentAddress <<Entity>> {
+    + id : int <<PK>>
+    + shipment : Shipment <<OneToOne>>
+    + recipient_name : str
+    + phone : str
+    + address : text
+    + city : str
+    + country : str
+    + created_at : datetime
+  }
+
+  class ShipmentTrackingEvent <<Entity>> {
+    + id : int <<PK>>
+    + shipment : Shipment <<FK, CASCADE>>
+    + status : str
+    + location : str
+    + description : text
+    + event_time : datetime
+    + metadata : JSON
+  }
+
+  class ShippingRate <<Entity>> {
+    + id : int <<PK>>
+    + carrier : str
+    + city : str
+    + country : str
+    + base_fee : Decimal
+    + estimated_days_min : int
+    + estimated_days_max : int
+    + is_active : bool
+    + created_at : datetime
+    + updated_at : datetime
+  }
+}
+
+package "Presentation & Application Layer\n(Views, Serializers)" as APP {
+
+  class ShipmentViewSet <<Controller>> {
+    + list(request) : Response
+    + retrieve(request, pk) : Response
+    + create(request) : Response
+    + mark_ready(request, pk) : Response
+    + ship(request, pk) : Response
+    + deliver(request, pk) : Response
+    + cancel(request, pk) : Response
+    + fail(request, pk) : Response
+    - _scoped_queryset(request) : QuerySet
+    - _fetch_order(order_id, ...) : (dict, Response)
+    - _update_order_status(shipment, status) : Response
+    - _transition(shipment, new_status, ...) : bool
+    - _order_headers(session_key) : dict
+  }
+
+  class OrderServiceClient <<External HTTP>> {
+    + get_order(order_id) : dict
+    + update_status(order_id, "COMPLETED") : void
+  }
+
+  class InteractionTracker <<Cross-cutting>> {
+    + emit_shipment_created(shipment)
+    + emit_shipment_ready(shipment)
+    + emit_shipment_shipped(shipment)
+    + emit_shipment_delivered(shipment)
+    + emit_shipment_cancelled(shipment)
+    + emit_shipment_failed(shipment)
+  }
+
+  class ShipmentSerializer <<Serializer/DTO>> {
+    + id; order_id; customer_id; session_key
+    + recipient_name; phone; address; city; country
+    + carrier; tracking_number; shipping_fee
+    + status; failure_reason
+    + shipped_at; delivered_at; cancelled_at
+    + delivery_address : ShipmentAddressSerializer (nested)
+    + tracking_events : ShipmentTrackingEventSerializer[] (nested)
+    + created_at; updated_at
+  }
+
+  class ShipmentCreateSerializer <<Serializer/DTO>> {
+    + order_id : int (required)
+    + customer_id : int (optional)
+    + session_key : str (optional)
+    + recipient_name : str (required)
+    + phone : str (required)
+    + address : str (required)
+    + city; country; carrier; shipping_fee
+    --
+    + validate(attrs) : dict
+  }
+
+  class ShipmentAddressSerializer <<Serializer/DTO>> {
+    + id; recipient_name; phone
+    + address; city; country; created_at
+  }
+
+  class ShipmentTrackingEventSerializer <<Serializer/DTO>> {
+    + id; status; location; description
+    + event_time; metadata
+  }
+
+  class ShipmentFailSerializer <<Serializer/DTO>> {
+    + failure_reason : str (optional)
+  }
+
+  class ShippingRateSerializer <<Serializer/DTO>> {
+    + id; carrier; city; country; base_fee
+    + estimated_days_min; estimated_days_max; is_active
+  }
+}
+
+Shipment "1" -- "1" ShipmentAddress : "OneToOne (related_name='delivery_address')"
+Shipment "1" *-- "0..*" ShipmentTrackingEvent : "FK CASCADE (related_name='tracking_events')\nAuto-created on each _transition()"
+Shipment ..> ShipmentStatus : "uses"
+
+ShipmentViewSet ..> Shipment : "CRUD + state transitions"
+ShipmentViewSet ..> ShipmentAddress : "create on shipment create"
+ShipmentViewSet ..> ShipmentTrackingEvent : "auto-created in _transition()"
+ShipmentViewSet ..> OrderServiceClient : "verify order PAID\nupdate order→COMPLETED on deliver"
+ShipmentViewSet ..> InteractionTracker : "emit events"
+ShipmentViewSet ..> ShipmentSerializer : "output"
+ShipmentViewSet ..> ShipmentCreateSerializer : "input (create)"
+ShipmentViewSet ..> ShipmentFailSerializer : "input (fail)"
+ShipmentSerializer ..> ShipmentAddressSerializer : "nested"
+ShipmentSerializer ..> ShipmentTrackingEventSerializer : "nested"
+
+note right of Shipment
+  can_transition_to() — State Machine:
+  PENDING → READY_TO_SHIP, SHIPPED, CANCELLED, FAILED
+  READY_TO_SHIP → SHIPPED, CANCELLED, FAILED
+  SHIPPED → DELIVERED, FAILED
+  DELIVERED → (terminal)
+  FAILED → (terminal)
+  CANCELLED → (terminal)
+
+  order_id UNIQUE → 1 Order has at most 1 Shipment.
+  If create() with an existing order_id
+  → idempotent: returns the existing shipment (HTTP 200).
+end note
+
+note bottom of ShipmentViewSet
+  create():
+  1. Verify order_id doesn't have a shipment yet (idempotent)
+  2. Fetch order from order-service
+  3. Validate order.status == "PAID"
+  4. Create Shipment + ShipmentAddress (snapshot)
+  5. Create ShipmentTrackingEvent: "Shipment created."
+  6. emit: shipment_created
+
+  deliver():
+  → _transition(DELIVERED)
+  → _update_order_status(order, "COMPLETED")
+  → emit: shipment_delivered
+
+  ship():
+  → tracking_number = "MOCK-<uuid>"
+  → shipped_at = now()
+end note
+
+@enduml

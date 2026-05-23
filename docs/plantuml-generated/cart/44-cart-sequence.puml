@@ -1,0 +1,103 @@
+@startuml 44-cart-sequence
+title Cart Domain - Sequence Diagram
+
+participant Client
+participant CartViewSet
+participant CartAddSerializer
+participant CartUpdateSerializer
+participant CartRemoveSerializer
+participant ProductService
+database CartDB
+
+== Get Current Cart ==
+
+Client -> CartViewSet : GET /api/cart/current\nX-Cart-Session-Key: <key>
+
+alt no session key in header
+  CartViewSet -> CartDB : CartSession.create(uuid4())
+  CartDB --> CartViewSet : new session_key
+else session key present
+  CartViewSet -> CartDB : CartSession.get_or_create(session_key)
+  CartDB --> CartViewSet : session
+end
+
+CartViewSet -> CartDB : Cart.filter(session_key)
+CartDB --> CartViewSet : cart items
+CartViewSet -> CartViewSet : compute subtotal, item_count, total_quantity
+CartViewSet -> CartDB : CartSnapshot.create(session_key, items, subtotal)
+CartDB --> CartViewSet : snapshot saved
+CartViewSet -> CartDB : CartEvent.create(cart_viewed)
+CartDB --> CartViewSet : event saved
+CartViewSet --> Client : 200 {session_key, items, item_count, subtotal}\nX-Cart-Session-Key: <key>
+
+== Add Product to Cart ==
+
+Client -> CartViewSet : POST /api/cart/add\n{product_id, quantity}
+CartViewSet -> CartAddSerializer : validate(data)
+CartAddSerializer --> CartViewSet : validated_data
+
+CartViewSet -> CartDB : CartSession.get_or_create(session_key)
+CartDB --> CartViewSet : session
+
+CartViewSet -> ProductService : GET /api/products/{product_id}/
+ProductService --> CartViewSet : {base_price, is_active}
+
+alt product not found or inactive
+  CartViewSet -> CartViewSet : price_snapshot = null
+else found
+  CartViewSet -> CartViewSet : price_snapshot = base_price
+end
+
+CartViewSet -> CartDB : Cart.get_or_create(session_key, product_id)
+CartDB --> CartViewSet : (cart_item, created)
+
+alt cart_item already existed
+  CartViewSet -> CartDB : cart.quantity += quantity; cart.save()
+  CartDB --> CartViewSet : updated
+else new item
+  CartViewSet -> CartDB : Cart.create(session_key, product_id, quantity, price_snapshot)
+  CartDB --> CartViewSet : new cart item
+end
+
+CartViewSet -> CartDB : CartEvent.create(cart_item_added)
+CartDB --> CartViewSet : event saved
+CartViewSet --> Client : 200 Cart item data
+
+== Update Quantity ==
+
+Client -> CartViewSet : POST /api/cart/update\n{product_id, quantity}
+CartViewSet -> CartUpdateSerializer : validate(data)
+CartUpdateSerializer --> CartViewSet : validated_data
+CartViewSet -> CartDB : Cart.get(session_key, product_id)
+
+alt not found
+  CartViewSet --> Client : 404 Not Found
+else found
+  CartViewSet -> CartDB : cart.quantity = new_quantity; cart.save()
+  CartDB --> CartViewSet : updated
+  CartViewSet -> CartDB : CartEvent.create(cart_item_quantity_updated)
+  CartDB --> CartViewSet : event saved
+  CartViewSet --> Client : 200 Updated cart item
+end
+
+== Remove Product ==
+
+Client -> CartViewSet : POST /api/cart/remove\n{product_id}
+CartViewSet -> CartRemoveSerializer : validate(data)
+CartRemoveSerializer --> CartViewSet : validated_data
+CartViewSet -> CartDB : Cart.filter(session_key, product_id).delete()
+CartDB --> CartViewSet : deleted
+CartViewSet -> CartDB : CartEvent.create(cart_item_removed)
+CartDB --> CartViewSet : event saved
+CartViewSet --> Client : 200 {message: removed}
+
+== Clear Cart ==
+
+Client -> CartViewSet : POST /api/cart/clear
+CartViewSet -> CartDB : Cart.filter(session_key).delete()
+CartDB --> CartViewSet : all items deleted
+CartViewSet -> CartDB : CartEvent.create(cart_cleared)
+CartDB --> CartViewSet : event saved
+CartViewSet --> Client : 200 {message: cleared}
+
+@enduml

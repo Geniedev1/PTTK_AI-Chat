@@ -1,0 +1,101 @@
+@startuml 04-product-db
+
+skinparam linetype ortho
+skinparam entity {
+  FontStyle bold
+}
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam defaultFontSize 11
+
+entity "catalog_categories\n(CategoryModel)" as CategoryModel {
+  * id : INTEGER <<PK, AUTO>>
+  --
+  name : VARCHAR(255)
+  slug : VARCHAR(255) <<UNIQUE>>
+  # parent_id : INTEGER <<FK → self, nullable>>
+  --
+  db_table = 'catalog_categories'
+}
+
+entity "catalog_brands\n(BrandModel)" as BrandModel {
+  * id : INTEGER <<PK, AUTO>>
+  --
+  name : VARCHAR(255)
+  slug : VARCHAR(255) <<UNIQUE>>
+  --
+  db_table = 'catalog_brands'
+}
+
+entity "catalog_product_types\n(ProductTypeModel)" as ProductTypeModel {
+  * id : INTEGER <<PK, AUTO>>
+  --
+  code : VARCHAR(50) <<UNIQUE>>
+  name : VARCHAR(255)
+  description : TEXT
+  --
+  db_table = 'catalog_product_types'
+}
+
+entity "catalog_products\n(ProductModel)" as ProductModel {
+  * id : INTEGER <<PK, AUTO>>
+  --
+  name : VARCHAR(255)
+  slug : VARCHAR(255) <<UNIQUE>>
+  short_description : TEXT
+  description : TEXT
+  # category_id : INTEGER <<FK → catalog_categories, nullable, SET_NULL>>
+  # brand_id : INTEGER <<FK → catalog_brands, nullable, SET_NULL>>
+  # product_type_id : INTEGER <<FK → catalog_product_types, nullable, SET_NULL>>
+  base_price : DECIMAL(12,2)
+  stock : INTEGER [default=0]
+  attributes : JSON [default={}]
+  tags : JSON [default=[]]
+  image_urls : JSON [default=[]]
+  is_active : BOOLEAN [default=True]
+  created_at : DATETIME
+  updated_at : DATETIME
+  --
+  db_table = 'catalog_products'
+}
+
+entity "catalog_variants\n(VariantModel)" as VariantModel {
+  * id : INTEGER <<PK, AUTO>>
+  --
+  # product_id : INTEGER <<FK → catalog_products, CASCADE>>
+  sku : VARCHAR(64) <<UNIQUE>>
+  name : VARCHAR(255)
+  attributes : JSON [default={}]
+  stock : INTEGER [default=0]
+  price_override : DECIMAL(12,2) <<nullable>>
+  is_default : BOOLEAN [default=False]
+  created_at : DATETIME
+  updated_at : DATETIME
+  --
+  db_table = 'catalog_variants'
+}
+
+CategoryModel ||--o{ CategoryModel : "parent_id\n(self-referential\nForeignKey, nullable)\nparent → children"
+CategoryModel ||--o{ ProductModel : "category_id (FK, nullable)"
+BrandModel ||--o{ ProductModel : "brand_id (FK, nullable)"
+ProductTypeModel ||--o{ ProductModel : "product_type_id (FK, nullable)"
+ProductModel ||--o{ VariantModel : "product_id (ForeignKey, CASCADE)\nrelated_name='variants'"
+
+note top of ProductModel
+  Slug automatically generated from name.
+  Ensures unique slug using suffix (name-2, name-3...).
+  ProductQuerySet supports filtering by active, in_stock, search.
+end note
+
+note right of VariantModel
+  Product variant (color, size...).
+  price_override = NULL → uses base_price of ProductModel.
+  is_default = True: default displayed variant.
+end note
+
+note bottom of CategoryModel
+  Supports multi-level categories (self-referential FK).
+  parent_id = NULL → root category.
+end note
+
+@enduml

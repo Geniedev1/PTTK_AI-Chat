@@ -1,0 +1,94 @@
+@startuml 06-order-db
+
+skinparam linetype ortho
+skinparam entity {
+  FontStyle bold
+}
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam defaultFontSize 11
+
+entity "orders_order\n(Order)" as Order {
+  * id : INTEGER <<PK, AUTO>>
+  --
+  customer_id : INTEGER <<nullable, INDEX>>\n(denormalized - cross-service)
+  session_key : VARCHAR(40) <<INDEX>>
+  status : VARCHAR(20)\n[PENDING|CONFIRMED|PAID|CANCELLED|COMPLETED]
+  total_amount : DECIMAL(12,2) [default=0]
+  confirmed_at : DATETIME <<nullable>>
+  paid_at : DATETIME <<nullable>>
+  completed_at : DATETIME <<nullable>>
+  cancelled_at : DATETIME <<nullable>>
+  created_at : DATETIME
+  updated_at : DATETIME
+  --
+  ORDER BY -created_at
+}
+
+entity "orders_orderitem\n(OrderItem)" as OrderItem {
+  * id : INTEGER <<PK, AUTO>>
+  --
+  # order_id : INTEGER <<FK → orders_order.id, CASCADE>>
+  product_id : INTEGER\n(denormalized snapshot - cross-service)
+  product_name_snapshot : VARCHAR(255)
+  price_snapshot : DECIMAL(12,2)
+  quantity : INTEGER [default=1]
+  created_at : DATETIME
+}
+
+entity "orders_orderstatushistory\n(OrderStatusHistory)" as OrderStatusHistory {
+  * id : INTEGER <<PK, AUTO>>
+  --
+  # order_id : INTEGER <<FK → orders_order.id, CASCADE>>
+  old_status : VARCHAR(20)
+  new_status : VARCHAR(20)
+  changed_by : VARCHAR(100) [default='system']
+  metadata : JSON [default={}]
+  created_at : DATETIME
+  --
+  INDEX (order_id, new_status)
+  INDEX (created_at)
+}
+
+entity "orders_ordernote\n(OrderNote)" as OrderNote {
+  * id : INTEGER <<PK, AUTO>>
+  --
+  # order_id : INTEGER <<FK → orders_order.id, CASCADE>>
+  note : TEXT
+  created_by : VARCHAR(100) [default='system']
+  is_internal : BOOLEAN [default=True]
+  created_at : DATETIME
+}
+
+Order ||--o{ OrderItem : "order_id (ForeignKey, CASCADE)\nrelated_name='items'"
+Order ||--o{ OrderStatusHistory : "order_id (ForeignKey, CASCADE)\nrelated_name='status_history'"
+Order ||--o{ OrderNote : "order_id (ForeignKey, CASCADE)\nrelated_name='notes'"
+
+note right of Order
+  Valid status transitions (can_transition_to):
+  PENDING → CONFIRMED / PAID / CANCELLED
+  CONFIRMED → PAID / CANCELLED
+  PAID → COMPLETED
+  CANCELLED → (terminal)
+  COMPLETED → (terminal)
+end note
+
+note bottom of OrderItem
+  Snapshot of product name & price at order time.
+  product_id is pure INTEGER, no physical FK to
+  product-service (cross-service architecture).
+end note
+
+note bottom of OrderStatusHistory
+  Each status change in Order
+  → creates 1 history record.
+  changed_by = 'order-service' (programmatic),
+  or user_id if changed via admin.
+end note
+
+note right of OrderNote
+  is_internal = True: internal note (Staff).
+  is_internal = False: visible note for Customer.
+end note
+
+@enduml

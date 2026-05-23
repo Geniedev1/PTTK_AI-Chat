@@ -1,0 +1,117 @@
+@startuml 08-shipping-db
+
+skinparam linetype ortho
+skinparam entity {
+  FontStyle bold
+}
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam defaultFontSize 11
+
+entity "shipments_shipment\n(Shipment)" as Shipment {
+  * id : INTEGER <<PK, AUTO>>
+  --
+  order_id : INTEGER <<UNIQUE>>\n(denormalized - cross-service,\n1 order → 1 shipment)
+  customer_id : INTEGER <<nullable, INDEX>>\n(denormalized - cross-service)
+  session_key : VARCHAR(40) <<nullable, INDEX>>
+  recipient_name : VARCHAR(255)
+  phone : VARCHAR(32)
+  address : TEXT
+  city : VARCHAR(100)
+  country : VARCHAR(100)
+  carrier : VARCHAR(64) [default='mock']
+  tracking_number : VARCHAR(64) <<INDEX>>
+  shipping_fee : DECIMAL(12,2) [default=0]
+  status : VARCHAR(20)\n[PENDING|READY_TO_SHIP|SHIPPED\n|DELIVERED|FAILED|CANCELLED]
+  failure_reason : TEXT
+  shipped_at : DATETIME <<nullable>>
+  delivered_at : DATETIME <<nullable>>
+  cancelled_at : DATETIME <<nullable>>
+  created_at : DATETIME
+  updated_at : DATETIME
+  --
+  INDEX (customer_id, status)
+  INDEX (session_key, status)
+  ORDER BY -created_at
+}
+
+entity "shipments_shipmentaddress\n(ShipmentAddress)" as ShipmentAddress {
+  * id : INTEGER <<PK, AUTO>>
+  --
+  # shipment_id : INTEGER <<FK → shipments_shipment.id, OneToOne>>
+  recipient_name : VARCHAR(255)
+  phone : VARCHAR(32)
+  address : TEXT
+  city : VARCHAR(100)
+  country : VARCHAR(100)
+  created_at : DATETIME
+}
+
+entity "shipments_shipmenttrackingevent\n(ShipmentTrackingEvent)" as ShipmentTrackingEvent {
+  * id : INTEGER <<PK, AUTO>>
+  --
+  # shipment_id : INTEGER <<FK → shipments_shipment.id, CASCADE>>
+  status : VARCHAR(20)
+  location : VARCHAR(255)
+  description : TEXT
+  event_time : DATETIME
+  metadata : JSON [default={}]
+  --
+  INDEX (shipment_id, status)
+  INDEX (event_time)
+  ORDER BY -event_time
+}
+
+entity "shipments_shippingrate\n(ShippingRate)" as ShippingRate {
+  * id : INTEGER <<PK, AUTO>>
+  --
+  carrier : VARCHAR(64)
+  city : VARCHAR(100)
+  country : VARCHAR(100)
+  base_fee : DECIMAL(12,2) [default=0]
+  estimated_days_min : INTEGER [default=1]
+  estimated_days_max : INTEGER [default=5]
+  is_active : BOOLEAN [default=True]
+  created_at : DATETIME
+  updated_at : DATETIME
+  --
+  INDEX (carrier, country, city)
+  ORDER BY carrier, country, city
+}
+
+Shipment ||--|| ShipmentAddress : "shipment_id (OneToOne)\nrelated_name='delivery_address'"
+Shipment ||--o{ ShipmentTrackingEvent : "shipment_id (ForeignKey, CASCADE)\nrelated_name='tracking_events'"
+
+note right of Shipment
+  Valid status transitions (can_transition_to):
+  PENDING → READY_TO_SHIP / SHIPPED / CANCELLED / FAILED
+  READY_TO_SHIP → SHIPPED / CANCELLED / FAILED
+  SHIPPED → DELIVERED / FAILED
+  DELIVERED → (terminal)
+  FAILED → (terminal)
+  CANCELLED → (terminal)
+end note
+
+note right of ShipmentTrackingEvent
+  Every call to _transition() →
+  automatically creates 1 ShipmentTrackingEvent.
+  When SHIPPED: generates tracking_number = MOCK-<uuid>
+  When DELIVERED: calls order-service
+  update_status → COMPLETED.
+end note
+
+note bottom of ShippingRate
+  Shipping rate configuration table.
+  carrier='mock' by default in dev.
+  Not integrated with real carrier APIs yet.
+end note
+
+note left of Shipment
+  order_id UNIQUE → 1 Order has at most
+  1 Shipment.
+  If a shipment is created for an existing order_id
+  → returns the existing shipment (idempotent).
+  Can only be created for orders with status=PAID.
+end note
+
+@enduml

@@ -1,0 +1,146 @@
+@startuml 31-ai-service-domain-class
+title AI Service Domain - Design Class Diagram
+
+class RecommendationRequest {
+  + id : int
+  + user_id : int
+  + session_id : str
+  + strategy : str
+  + context : str
+  + created_at : str
+}
+
+class RecommendationResult {
+  + id : int
+  + product_id : int
+  + score : float
+  + deep_model_score : float
+  + reason_codes : str
+  + rank_position : int
+  + created_at : str
+}
+
+class ProductCatalogClient {
+  + fetch_products() : list
+  + fetch_product(product_id) : dict
+}
+
+class InteractionAnalyticsClient {
+  + fetch_events(user_id, session_id, limit) : list
+  + fetch_product_gaps() : list
+  + fetch_user_interest(user_id, session_id, limit) : list
+  + fetch_product_neighbors(product_id, limit) : list
+  + fetch_similar_users(user_id, session_id, limit) : list
+}
+
+class CartClient {
+  + fetch_current_cart(session_id) : dict
+}
+
+class OrderClient {
+  + fetch_order(order_id, customer_id) : dict
+}
+
+class OpenAIClient {
+  + enabled : bool
+  + chat_model : str
+  + generate_answer(prompt, question) : str
+  + embed_texts(texts) : list
+}
+
+class FeaturePreprocessor {
+  + numeric_fields : list
+  + categorical_fields : list
+  + input_dim : int
+  + fit(feature_rows) : void
+  + transform(feature_rows) : list
+  + to_config() : dict
+}
+
+class DeepModelRuntime {
+  + enabled : bool
+  + artifact_dir : str
+  + alpha : float
+  + status() : dict
+  + score_candidates(feature_rows) : dict
+}
+
+class BehavioralProfileBuilder {
+  + build(products, user_id, session_id) : dict
+  + empty() : dict
+  + status() : dict
+}
+
+class RecommendationService {
+  + recommend_home(user_id, session_id, limit) : dict
+  + recommend_product_detail(product_id, user_id) : dict
+  + recommend_cart(session_id, user_id, limit) : dict
+  + get_profile_snapshot(user_id, session_id) : dict
+  + get_model_status() : dict
+}
+
+class ChatbotService {
+  + chat(message, user_id, session_id) : dict
+  + retrieve(message, user_id, session_id) : dict
+}
+
+class KnowledgeChunk {
+  + source_type : str
+  + source_id : str
+  + title : str
+  + text : str
+  + product_id : int
+}
+
+class RecommendationViewSet {
+  + home(request) : Response
+  + product_detail(request) : Response
+  + cart(request) : Response
+  + profile_snapshot(request) : Response
+}
+
+class ModelStatusViewSet {
+  + status(request) : Response
+}
+
+class ChatViewSet {
+  + create(request) : Response
+  + retrieve_context(request) : Response
+}
+
+class ChatRequestSerializer {
+  + message : str
+  + user_id : int
+  + session_id : str
+  + customer_id : int
+  + product_id : int
+  + order_id : int
+}
+
+RecommendationRequest "1" -- "0..*" RecommendationResult
+
+DeepModelRuntime ..> FeaturePreprocessor
+
+BehavioralProfileBuilder ..> InteractionAnalyticsClient
+BehavioralProfileBuilder ..> CartClient
+
+RecommendationService ..> ProductCatalogClient
+RecommendationService ..> InteractionAnalyticsClient
+RecommendationService ..> CartClient
+RecommendationService ..> BehavioralProfileBuilder
+RecommendationService ..> DeepModelRuntime
+
+ChatbotService ..> ProductCatalogClient
+ChatbotService ..> OrderClient
+ChatbotService ..> CartClient
+ChatbotService ..> InteractionAnalyticsClient
+ChatbotService ..> OpenAIClient
+ChatbotService ..> BehavioralProfileBuilder
+ChatbotService ..> KnowledgeChunk
+
+RecommendationViewSet ..> RecommendationService
+ModelStatusViewSet ..> RecommendationService
+ChatViewSet ..> ChatbotService
+ChatViewSet ..> ChatRequestSerializer
+
+@enduml

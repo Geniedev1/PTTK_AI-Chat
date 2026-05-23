@@ -1,0 +1,176 @@
+@startuml 18-order-service-analysis-class
+
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam defaultFontSize 11
+skinparam class {
+  FontStyle bold
+}
+
+package "Domain Layer\n(Models)" as DOMAIN {
+
+  enum OrderStatus <<enum>> {
+    PENDING
+    CONFIRMED
+    PAID
+    CANCELLED
+    COMPLETED
+  }
+
+  class Order <<Entity>> {
+    + id : int <<PK>>
+    + customer_id : int (nullable, cross-service)
+    + session_key : str
+    + status : OrderStatus
+    + total_amount : Decimal
+    + confirmed_at : datetime (nullable)
+    + paid_at : datetime (nullable)
+    + completed_at : datetime (nullable)
+    + cancelled_at : datetime (nullable)
+    + created_at : datetime
+    + updated_at : datetime
+    --
+    + can_transition_to(new_status) : bool
+    + purchase_succeeded() : bool
+    + purchase_event() : str
+  }
+
+  class OrderItem <<Entity>> {
+    + id : int <<PK>>
+    + order : Order <<FK, CASCADE>>
+    + product_id : int (snapshot, cross-service)
+    + product_name_snapshot : str
+    + price_snapshot : Decimal
+    + quantity : int
+    + created_at : datetime
+  }
+
+  class OrderStatusHistory <<Entity>> {
+    + id : int <<PK>>
+    + order : Order <<FK, CASCADE>>
+    + old_status : str
+    + new_status : str
+    + changed_by : str
+    + metadata : JSON
+    + created_at : datetime
+  }
+
+  class OrderNote <<Entity>> {
+    + id : int <<PK>>
+    + order : Order <<FK, CASCADE>>
+    + note : text
+    + created_by : str
+    + is_internal : bool
+    + created_at : datetime
+  }
+}
+
+package "Presentation & Application Layer\n(Views, Serializers)" as APP {
+
+  class OrderViewSet <<Controller>> {
+    + list(request) : Response
+    + retrieve(request, pk) : Response
+    + create(request) : Response
+    + update_status(request, pk) : Response
+    - _get_scoped_queryset(request) : QuerySet
+    - _fetch_cart(session_key) : list[CartItem]
+    - _fetch_product_price(product_id) : (name, price)
+    - _transition_order(order, new_status) : bool
+    - _emit_order_event(event_type, order)
+  }
+
+  class CartServiceClient <<External HTTP>> {
+    + get_cart(session_key) : list[CartItem]
+    + clear_cart(session_key) : void
+  }
+
+  class ProductServiceClient <<External HTTP>> {
+    + get_product_info(product_id) : (name, price)
+  }
+
+  class OrderSerializer <<Serializer/DTO>> {
+    + id; customer_id; session_key; status
+    + total_amount; purchase_succeeded; purchase_event
+    + confirmed_at; paid_at; completed_at; cancelled_at
+    + items : OrderItemSerializer (nested)
+    + status_history : OrderStatusHistorySerializer (nested)
+    + notes : OrderNoteSerializer (nested)
+    + created_at; updated_at
+    --
+    + get_purchase_succeeded(obj) : bool
+    + get_purchase_event(obj) : str
+    + get_status_history(obj) : list
+    + get_notes(obj) : list
+  }
+
+  class OrderItemSerializer <<Serializer/DTO>> {
+    + id; product_id; product_name_snapshot
+    + price_snapshot; quantity; created_at
+  }
+
+  class OrderStatusHistorySerializer <<Serializer/DTO>> {
+    + id; old_status; new_status
+    + changed_by; metadata; created_at
+  }
+
+  class OrderNoteSerializer <<Serializer/DTO>> {
+    + id; note; created_by; is_internal; created_at
+  }
+
+  class OrderCreateSerializer <<Serializer/DTO>> {
+    + customer_id : int (optional)
+    + clear_cart : bool (default=True)
+  }
+
+  class OrderStatusUpdateSerializer <<Serializer/DTO>> {
+    + status : ChoiceField(Order.Status.choices)
+  }
+}
+
+Order "1" *-- "1..*" OrderItem : "items (FK→order)"
+Order "1" *-- "0..*" OrderStatusHistory : "status_history (FK→order)"
+Order "1" *-- "0..*" OrderNote : "notes (FK→order)"
+Order ..> OrderStatus : "uses"
+
+OrderViewSet ..> Order : "CRUD + state transitions"
+OrderViewSet ..> OrderItem : "create items from cart"
+OrderViewSet ..> OrderStatusHistory : "auto-create on transition"
+OrderViewSet ..> CartServiceClient : "fetch cart items\nclear cart after order"
+OrderViewSet ..> ProductServiceClient : "fetch product name+price"
+OrderViewSet ..> OrderSerializer : "output"
+OrderViewSet ..> OrderCreateSerializer : "input (create)"
+OrderViewSet ..> OrderStatusUpdateSerializer : "input (update_status)"
+OrderSerializer ..> OrderItemSerializer : "nested items"
+OrderSerializer ..> OrderStatusHistorySerializer : "nested history"
+OrderSerializer ..> OrderNoteSerializer : "nested notes"
+
+note right of Order
+  can_transition_to() — State Machine:
+  PENDING → CONFIRMED, PAID, CANCELLED
+  CONFIRMED → PAID, CANCELLED
+  PAID → COMPLETED
+  CANCELLED → (terminal)
+  COMPLETED → (terminal)
+
+  purchase_succeeded():
+    status in {PAID, COMPLETED}
+
+  purchase_event():
+    "order_paid" if PAID
+    "order_completed" if COMPLETED
+end note
+
+note bottom of OrderViewSet
+  create() — Order creation flow:
+  1. Read session_key from X-Cart-Session-Key header
+  2. GET /api/cart/current → get cart items
+  3. Validate cart is not empty
+  4. Fetch price snapshot from product-service
+  5. Create Order + OrderItems (atomic)
+  6. If clear_cart=True → clear cart
+  7. Emit interaction event: order_created
+
+  update_status() — Admin only (X-Internal-Admin-Key)
+end note
+
+@enduml

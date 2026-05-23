@@ -1,0 +1,122 @@
+@startuml 49-ai-service-sequence
+title AI Service Domain - Sequence Diagram
+
+participant Client
+participant ChatViewSet
+participant ChatbotService
+participant RecommendationViewSet
+participant RecommendationService
+participant DeepModelRuntime
+participant BehavioralProfileBuilder
+participant ProductService
+participant CartService
+participant OrderService
+participant InteractionService
+participant OpenAIClient
+database AiDB
+
+== Recommend Home ==
+
+Client -> RecommendationViewSet : GET /api/ai/recommend/home\n?user_id=5&limit=10
+RecommendationViewSet -> RecommendationService : recommend_home(user_id, session_id, limit)
+RecommendationService -> ProductService : fetch_products()
+ProductService --> RecommendationService : product list
+
+RecommendationService -> InteractionService : fetch_product_gaps()
+InteractionService --> RecommendationService : product gaps
+RecommendationService -> RecommendationService : apply_popularity(score_cards, gaps)
+
+alt user_id or session_id provided
+  RecommendationService -> InteractionService : fetch_events(user_id, session_id)
+  InteractionService --> RecommendationService : events
+  RecommendationService -> InteractionService : fetch_user_interest(user_id)
+  InteractionService --> RecommendationService : interest list
+  RecommendationService -> InteractionService : fetch_similar_users(user_id)
+  InteractionService --> RecommendationService : similar users
+  RecommendationService -> BehavioralProfileBuilder : build(products, user_id, events, cart)
+  BehavioralProfileBuilder --> RecommendationService : profile_snapshot
+  RecommendationService -> RecommendationService : apply_actor_context(score_cards, ...)
+  RecommendationService -> RecommendationService : apply_behavioral_profile_bias(...)
+end
+
+RecommendationService -> DeepModelRuntime : score_candidates(feature_rows)
+DeepModelRuntime --> RecommendationService : {applied, scores, model_version, fallback_mode}
+
+alt deep model applied
+  RecommendationService -> RecommendationService : score += alpha * deep_model_score
+end
+
+RecommendationService -> RecommendationService : rank products by score
+RecommendationService -> AiDB : RecommendationRequest.create(strategy=home)
+RecommendationService -> AiDB : RecommendationResult.bulk_create(ranked items)
+AiDB --> RecommendationService : saved
+RecommendationService --> RecommendationViewSet : {context, items}
+RecommendationViewSet --> Client : 200 recommendation response
+
+== Chat with AI (RAG Flow) ==
+
+Client -> ChatViewSet : POST /api/ai/chat/\n{message, user_id, session_id, customer_id}
+ChatViewSet -> ChatbotService : chat(message, user_id, session_id, ...)
+
+ChatbotService -> InteractionService : emit chat_started event
+ChatbotService -> InteractionService : emit chat_message_sent event
+InteractionService --> ChatbotService : ok
+
+ChatbotService -> ChatbotService : _route_realtime(message)
+
+alt order status question
+  ChatbotService -> OrderService : fetch_order(order_id, customer_id)
+  OrderService --> ChatbotService : order data
+  ChatbotService -> ChatbotService : build order status answer
+  ChatbotService --> ChatViewSet : {answer, used_realtime_api: true}
+  ChatViewSet --> Client : 200 response
+else cart status question
+  ChatbotService -> CartService : fetch_current_cart(session_id)
+  CartService --> ChatbotService : cart data
+  ChatbotService -> ChatbotService : build cart summary answer
+  ChatbotService --> ChatViewSet : {answer, used_realtime_api: true}
+  ChatViewSet --> Client : 200 response
+else product price or stock question
+  ChatbotService -> ProductService : fetch_products()
+  ProductService --> ChatbotService : product list
+  ChatbotService -> ChatbotService : resolve product by name or id
+  ChatbotService --> ChatViewSet : {answer, used_realtime_api: true}
+  ChatViewSet --> Client : 200 response
+else greeting
+  ChatbotService -> BehavioralProfileBuilder : build(...)
+  BehavioralProfileBuilder --> ChatbotService : profile_snapshot
+  ChatbotService -> OpenAIClient : generate_answer(greeting prompt, message)
+  OpenAIClient --> ChatbotService : generated text or None
+  ChatbotService --> ChatViewSet : {answer: greeting, mode: greeting}
+  ChatViewSet --> Client : 200 response
+else general RAG flow
+  ChatbotService -> ProductService : fetch_products()
+  ProductService --> ChatbotService : product list
+  ChatbotService -> ChatbotService : build KnowledgeChunks from products and policy files
+
+  ChatbotService -> OpenAIClient : embed_texts([query] + [chunks])
+
+  alt embedding success
+    OpenAIClient --> ChatbotService : embedding vectors
+    ChatbotService -> ChatbotService : cosine_similarity ranking
+    ChatbotService -> ChatbotService : apply profile bias to chunks
+  else embedding failed
+    ChatbotService -> ChatbotService : lexical token overlap ranking
+  end
+
+  ChatbotService -> InteractionService : fetch_user_interest for graph context
+  InteractionService --> ChatbotService : graph context list
+
+  ChatbotService -> OpenAIClient : generate_answer(prompt with sources, message)
+
+  alt OpenAI returns content
+    OpenAIClient --> ChatbotService : generated answer
+  else OpenAI unavailable
+    ChatbotService -> ChatbotService : fallback_answer from top chunk excerpt
+  end
+
+  ChatbotService --> ChatViewSet : {answer, sources, retrieval_mode, profile_snapshot}
+  ChatViewSet --> Client : 200 response
+end
+
+@enduml

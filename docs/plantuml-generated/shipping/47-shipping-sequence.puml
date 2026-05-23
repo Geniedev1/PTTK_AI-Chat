@@ -1,0 +1,100 @@
+@startuml 47-shipping-sequence
+title Shipping Domain - Sequence Diagram
+
+participant Client
+participant ShipmentViewSet
+participant OrderService
+participant InteractionService
+database ShipmentDB
+
+== Create Shipment ==
+
+Client -> ShipmentViewSet : POST /api/shipments/\n{order_id, recipient_name, phone, address, ...}
+ShipmentViewSet -> ShipmentViewSet : validate ShipmentCreateSerializer
+
+alt validation failed
+  ShipmentViewSet --> Client : 400 Bad Request
+else valid
+  ShipmentViewSet -> ShipmentDB : Shipment.filter(order_id=order_id)
+  ShipmentDB --> ShipmentViewSet : existing or none
+
+  alt shipment already exists
+    ShipmentViewSet --> Client : 200 Existing shipment (idempotent)
+  else not exists
+    ShipmentViewSet -> OrderService : GET /api/orders/{order_id}/
+    OrderService --> ShipmentViewSet : order data
+
+    alt order not found
+      ShipmentViewSet --> Client : 404 Order not found
+    else order status not PAID
+      ShipmentViewSet --> Client : 400 Order must be PAID
+    else order is PAID
+      ShipmentViewSet -> ShipmentDB : transaction.atomic()
+      ShipmentViewSet -> ShipmentDB : Shipment.create(status=PENDING)
+      ShipmentDB --> ShipmentViewSet : shipment
+      ShipmentViewSet -> ShipmentDB : ShipmentAddress.create(shipment, address data)
+      ShipmentDB --> ShipmentViewSet : address snapshot
+      ShipmentViewSet -> ShipmentDB : ShipmentTrackingEvent.create(Shipment created)
+      ShipmentDB --> ShipmentViewSet : event
+      ShipmentViewSet -> InteractionService : emit shipment_created event
+      InteractionService --> ShipmentViewSet : ok
+      ShipmentViewSet --> Client : 201 Shipment data
+    end
+  end
+end
+
+== Mark Ready to Ship ==
+
+Client -> ShipmentViewSet : POST /api/shipments/{id}/mark_ready/
+ShipmentViewSet -> ShipmentDB : Shipment.objects.get(pk=id)
+ShipmentDB --> ShipmentViewSet : shipment
+
+alt invalid transition
+  ShipmentViewSet --> Client : 400 Cannot mark ready
+else valid
+  ShipmentViewSet -> ShipmentDB : shipment.status = READY_TO_SHIP; save()
+  ShipmentViewSet -> ShipmentDB : ShipmentTrackingEvent.create(Ready to ship)
+  ShipmentDB --> ShipmentViewSet : saved
+  ShipmentViewSet --> Client : 200 Shipment data
+end
+
+== Ship ==
+
+Client -> ShipmentViewSet : POST /api/shipments/{id}/ship/
+ShipmentViewSet -> ShipmentDB : Shipment.objects.get(pk=id)
+ShipmentDB --> ShipmentViewSet : shipment
+
+alt invalid transition
+  ShipmentViewSet --> Client : 400 Cannot ship
+else valid
+  ShipmentViewSet -> ShipmentViewSet : tracking_number = MOCK- + uuid()
+  ShipmentViewSet -> ShipmentDB : shipment.status = SHIPPED
+  ShipmentViewSet -> ShipmentDB : shipment.shipped_at = now(); save()
+  ShipmentViewSet -> ShipmentDB : ShipmentTrackingEvent.create(Shipped)
+  ShipmentDB --> ShipmentViewSet : saved
+  ShipmentViewSet -> InteractionService : emit shipment_shipped event
+  InteractionService --> ShipmentViewSet : ok
+  ShipmentViewSet --> Client : 200 Shipment data
+end
+
+== Deliver ==
+
+Client -> ShipmentViewSet : POST /api/shipments/{id}/deliver/
+ShipmentViewSet -> ShipmentDB : Shipment.objects.get(pk=id)
+ShipmentDB --> ShipmentViewSet : shipment
+
+alt invalid transition
+  ShipmentViewSet --> Client : 400 Cannot deliver
+else valid
+  ShipmentViewSet -> ShipmentDB : shipment.status = DELIVERED
+  ShipmentViewSet -> ShipmentDB : shipment.delivered_at = now(); save()
+  ShipmentViewSet -> ShipmentDB : ShipmentTrackingEvent.create(Delivered)
+  ShipmentDB --> ShipmentViewSet : saved
+  ShipmentViewSet -> OrderService : POST /api/orders/{order_id}/update_status/\n{status: COMPLETED}
+  OrderService --> ShipmentViewSet : order updated
+  ShipmentViewSet -> InteractionService : emit shipment_delivered event
+  InteractionService --> ShipmentViewSet : ok
+  ShipmentViewSet --> Client : 200 Shipment data
+end
+
+@enduml

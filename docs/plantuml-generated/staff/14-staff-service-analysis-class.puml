@@ -1,0 +1,145 @@
+@startuml 14-staff-service-analysis-class
+
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam defaultFontSize 11
+skinparam class {
+  FontStyle bold
+}
+
+package "Domain Layer\n(Models)" as DOMAIN {
+
+  class User <<Entity (Django auth_user)>> {
+    + id : int <<PK>>
+    + username : str
+    + email : str
+    + password : str (hashed)
+    + is_active : bool
+    + is_staff : bool
+    + is_superuser : bool
+    --
+    + check_password(raw) : bool
+  }
+
+  class Staff <<Entity>> {
+    + id : int <<PK>>
+    + user : User <<OneToOne, nullable>>
+    + name : str
+    + email : str <<unique>>
+    + phone : str
+    + position : str
+    + created_at : datetime
+    + updated_at : datetime
+  }
+
+  class StaffProfile <<Entity>> {
+    + id : int <<PK>>
+    + staff : Staff <<OneToOne>>
+    + department : str
+    + bio : text
+    + avatar_url : str
+    + updated_at : datetime
+  }
+
+  class StaffRoleAssignment <<Entity>> {
+    + id : int <<PK>>
+    + staff : Staff <<FK>>
+    + role_name : str
+    + scope : str
+    + is_active : bool
+    + assigned_at : datetime
+    --
+    UNIQUE(staff, role_name, scope)
+  }
+
+  class StaffActivityLog <<Entity>> {
+    + id : int <<PK>>
+    + staff : Staff <<FK>>
+    + action : str
+    + target_type : str
+    + target_id : str
+    + metadata : JSON
+    + created_at : datetime
+  }
+
+  class Token <<Entity (DRF authtoken)>> {
+    + key : str <<PK>>
+    + user : User <<OneToOne>>
+    + created : datetime
+  }
+}
+
+package "Presentation & Application Layer\n(Views, Serializers, Permissions)" as APP {
+
+  class StaffViewSet <<Controller>> {
+    + login(request) : Response
+    + register(request) : Response
+    + me(request) : Response
+    + update_profile(request) : Response
+    + list(request) : Response
+    + retrieve(request, pk) : Response
+  }
+
+  class InternalAdminPermission <<Permission>> {
+    + has_permission(request, view) : bool
+  }
+
+  class StaffSerializer <<Serializer/DTO>> {
+    + id; name; email; phone; position
+    + profile; role_assignments
+    + created_at; updated_at
+  }
+
+  class StaffRegisterSerializer <<Serializer/DTO>> {
+    + username : str (write_only)
+    + password : str (write_only)
+    + email : EmailField
+    + name : str
+    + position : str
+    --
+    + create(validated_data) : Staff
+  }
+
+  class StaffLoginSerializer <<Serializer/DTO>> {
+    + username : str
+    + password : str
+  }
+}
+
+User "1" -- "0..1" Staff : "user (OneToOne)"
+User "1" -- "1" Token : "user (OneToOne)"
+Staff "1" -- "0..1" StaffProfile : "staff (OneToOne)\nrelated_name='profile_detail'"
+Staff "1" o-- "0..*" StaffRoleAssignment : "staff (FK)\nrelated_name='role_assignments'"
+Staff "1" o-- "0..*" StaffActivityLog : "staff (FK)\nrelated_name='activity_logs'"
+
+StaffViewSet ..> Staff : "CRUD"
+StaffViewSet ..> StaffProfile : "update profile"
+StaffViewSet ..> Token : "get_or_create token\non login"
+StaffViewSet ..> InternalAdminPermission : "uses permission"
+StaffViewSet ..> StaffSerializer : "uses (output)"
+StaffViewSet ..> StaffRegisterSerializer : "uses (create)"
+StaffViewSet ..> StaffLoginSerializer : "uses (login)"
+
+note bottom of StaffViewSet
+  Login: POST /api/staff/login/
+    → authenticate(username, password)
+    → Token.objects.get_or_create(user)
+    → return token.key
+
+  Register: POST /api/staff/register/
+    → requires InternalAdminPermission
+    → create User + Staff atomically
+
+  me(): GET /api/staff/me/
+    → requires Token authentication
+
+  list()/retrieve(): Staff only (internal use)
+end note
+
+note right of InternalAdminPermission
+  Priority checks:
+  1. header X-Internal-Admin-Key == settings.INTERNAL_ADMIN_KEY
+  2. user.is_authenticated AND (user.is_staff OR user.is_superuser)
+end note
+
+@enduml

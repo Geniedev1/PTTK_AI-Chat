@@ -1,0 +1,154 @@
+@startuml 15-customer-service-analysis-class
+
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam defaultFontSize 11
+skinparam class {
+  FontStyle bold
+}
+
+package "Domain Layer\n(Models)" as DOMAIN {
+
+  class User <<Entity (Django auth_user)>> {
+    + id : int <<PK>>
+    + username : str
+    + email : str
+    + password : str (hashed)
+    + is_active : bool
+    --
+    + check_password(raw) : bool
+  }
+
+  class Customer <<Entity>> {
+    + id : int <<PK>>
+    + user : User <<OneToOne>>
+    + phone : str
+    + address : text
+    + city : str
+    + country : str
+    + created_at : datetime
+    + updated_at : datetime
+  }
+
+  class CustomerProfile <<Entity>> {
+    + id : int <<PK>>
+    + customer : Customer <<OneToOne>>
+    + full_name : str
+    + date_of_birth : date (nullable)
+    + gender : str
+    + marketing_opt_in : bool
+    + updated_at : datetime
+  }
+
+  class CustomerAddress <<Entity>> {
+    + id : int <<PK>>
+    + customer : Customer <<FK>>
+    + recipient_name : str
+    + phone : str
+    + address : text
+    + city : str
+    + country : str
+    + is_default : bool
+    + created_at : datetime
+    + updated_at : datetime
+  }
+
+  class CustomerActivityLog <<Entity>> {
+    + id : int <<PK>>
+    + customer : Customer <<FK>>
+    + event_type : str
+    + metadata : JSON
+    + created_at : datetime
+  }
+
+  class Token <<Entity (DRF authtoken)>> {
+    + key : str <<PK>>
+    + user : User <<OneToOne>>
+    + created : datetime
+  }
+}
+
+package "Presentation & Application Layer\n(Views, Serializers)" as APP {
+
+  class CustomerViewSet <<Controller>> {
+    + register(request) : Response
+    + login(request) : Response
+    + profile(request) : Response
+    + update_profile(request) : Response
+    + list(request) : Response [disabled]
+    + retrieve(request, pk) : Response
+  }
+
+  class CustomerSerializer <<Serializer/DTO>> {
+    + id; phone; address; city; country
+    + user : UserSerializer (nested, read_only)
+    + created_at; updated_at
+  }
+
+  class CustomerRegisterSerializer <<Serializer/DTO>> {
+    + username : str (write_only)
+    + password : str (write_only)
+    + email : EmailField
+    + phone; address; city; country
+    --
+    + validate_username(value) : str
+    + create(validated_data) : Customer
+  }
+
+  class CustomerLoginSerializer <<Serializer/DTO>> {
+    + username : str
+    + password : str
+  }
+
+  class CustomerProfileSerializer <<Serializer/DTO>> {
+    + id; phone; address; city; country
+    + user : UserSerializer (nested)
+  }
+
+  class UserSerializer <<Serializer/DTO>> {
+    + id; username; email
+    + first_name; last_name
+  }
+}
+
+User "1" -- "1" Customer : "user (OneToOne)"
+User "1" -- "1" Token : "user (OneToOne)"
+Customer "1" -- "0..1" CustomerProfile : "customer (OneToOne)\nrelated_name='profile_detail'"
+Customer "1" o-- "0..*" CustomerAddress : "customer (FK)\nrelated_name='addresses'"
+Customer "1" o-- "0..*" CustomerActivityLog : "customer (FK)\nrelated_name='activity_logs'"
+
+CustomerViewSet ..> Customer : "CRUD"
+CustomerViewSet ..> CustomerProfile : "read/update profile"
+CustomerViewSet ..> Token : "get_or_create on login"
+CustomerViewSet ..> CustomerSerializer : "output (read)"
+CustomerViewSet ..> CustomerRegisterSerializer : "input (register)"
+CustomerViewSet ..> CustomerLoginSerializer : "input (login)"
+CustomerViewSet ..> CustomerProfileSerializer : "output (profile)"
+CustomerSerializer ..> UserSerializer : "nested user field"
+CustomerProfileSerializer ..> UserSerializer : "nested user field"
+
+note bottom of CustomerViewSet
+  register(): POST /api/customers/register/
+    → transaction.atomic()
+    → User.objects.create_user()
+    → Customer.objects.create()
+
+  login(): POST /api/customers/login/
+    → authenticate(username, password)
+    → Token.objects.get_or_create(user)
+    → return {token, customer_id}
+
+  profile(): GET /api/customers/profile/
+    → requires Token Authentication
+
+  list(): HTTP 405 Method Not Allowed
+    (deliberately disabled in ViewSet)
+end note
+
+note right of CustomerAddress
+  is_default=True: default delivery address.
+  Ordering: [-is_default, -created_at]
+  Supports multiple addresses per account.
+end note
+
+@enduml

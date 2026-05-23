@@ -1,0 +1,187 @@
+@startuml system-analysis-class-domain-only
+
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam class {
+  FontStyle bold
+}
+
+hide methods
+
+package "User Management Domain" {
+    class Customer {
+        id
+        phone
+        address
+        city
+        country
+    }
+    class CustomerProfile {
+        full_name
+        date_of_birth
+        gender
+    }
+    class CustomerAddress {
+        recipient_name
+        phone
+        is_default
+    }
+    
+    class Staff {
+        id
+        name
+        email
+        position
+    }
+    class StaffProfile {
+        department
+        bio
+        avatar_url
+    }
+    class RoleAssignment {
+        role_name
+        scope
+        is_active
+    }
+}
+
+package "Product Catalog Domain" {
+    class Product {
+        id
+        name
+        slug
+        base_price
+        stock
+        is_active
+    }
+    class Variant {
+        id
+        sku
+        stock
+        price_override
+    }
+    class Category {
+        id
+        name
+        slug
+        parent_id
+    }
+    class Brand {
+        id
+        name
+        slug
+    }
+}
+
+package "Sales Domain (Cart & Order)" {
+    class CartSession {
+        session_key
+    }
+    class CartItem {
+        id
+        quantity
+        price_snapshot
+    }
+    
+    class Order {
+        id
+        status
+        total_amount
+        session_key
+    }
+    class OrderItem {
+        product_name_snapshot
+        price_snapshot
+        quantity
+    }
+    class OrderStatusHistory {
+        old_status
+        new_status
+        changed_by
+    }
+}
+
+package "Fulfillment Domain (Payment & Shipping)" {
+    class Payment {
+        id
+        status
+        amount
+        provider
+        idempotency_key
+    }
+    class PaymentTransaction {
+        transaction_type
+        amount
+        status
+    }
+    
+    class Shipment {
+        id
+        status
+        tracking_number
+        carrier
+    }
+    class ShipmentTrackingEvent {
+        status
+        description
+        event_time
+    }
+}
+
+package "Intelligence Domain (Interaction & AI)" {
+    class InteractionEvent {
+        event_id
+        event_type
+        session_id
+        signal_weight
+    }
+    class BehaviorProfile {
+        session_id
+        event_count
+        profile_json
+    }
+    
+    class ChatSession {
+        session_id
+        started_at
+        last_message_at
+    }
+    class ChatMessage {
+        role
+        message
+        retrieval_mode
+        sources
+    }
+}
+
+Customer "1" *-- "0..1" CustomerProfile : has
+Customer "1" *-- "0..*" CustomerAddress : has
+Staff "1" *-- "0..1" StaffProfile : has
+Staff "1" *-- "0..*" RoleAssignment : assigned
+
+Category "0..1" o-- "0..*" Product : contains
+Brand "0..1" o-- "0..*" Product : brands
+Product "1" *-- "0..*" Variant : has
+
+Customer "0..1" -- "0..*" CartSession : owns
+CartSession "1" *-- "0..*" CartItem : contains
+CartItem "0..*" -- "1" Product : references
+
+Customer "0..1" -- "0..*" Order : places
+Order "1" *-- "1..*" OrderItem : includes
+OrderItem "0..*" -- "1" Product : references
+Order "1" *-- "0..*" OrderStatusHistory : tracks
+
+Order "1" -- "0..1" Payment : paid by
+Payment "1" *-- "0..*" PaymentTransaction : logs
+Order "1" -- "0..1" Shipment : delivered by
+Shipment "1" *-- "0..*" ShipmentTrackingEvent : tracks
+
+Customer "0..1" -- "0..*" InteractionEvent : generates
+Product "0..1" -- "0..*" InteractionEvent : target of
+Customer "0..1" -- "0..1" BehaviorProfile : profiled as
+
+Customer "0..1" -- "0..*" ChatSession : chats in
+ChatSession "1" *-- "0..*" ChatMessage : contains
+
+@enduml

@@ -1,0 +1,104 @@
+@startuml 07-payment-db
+
+skinparam linetype ortho
+skinparam entity {
+  FontStyle bold
+}
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam defaultFontSize 11
+
+entity "payments_payment\n(Payment)" as Payment {
+  * id : INTEGER <<PK, AUTO>>
+  --
+  order_id : INTEGER <<INDEX>>\n(denormalized - cross-service)
+  customer_id : INTEGER <<nullable, INDEX>>\n(denormalized - cross-service)
+  session_key : VARCHAR(40) <<nullable, INDEX>>
+  amount : DECIMAL(12,2)
+  currency : VARCHAR(3) [default='USD']
+  provider : VARCHAR(32) [default='mock']
+  provider_reference : VARCHAR(128)
+  status : VARCHAR(20)\n[PENDING|PROCESSING|PAID|FAILED\n|CANCELLED|REFUNDED]
+  failure_reason : TEXT
+  idempotency_key : VARCHAR(128) <<nullable, UNIQUE>>
+  paid_at : DATETIME <<nullable>>
+  failed_at : DATETIME <<nullable>>
+  cancelled_at : DATETIME <<nullable>>
+  refunded_at : DATETIME <<nullable>>
+  created_at : DATETIME
+  updated_at : DATETIME
+  --
+  INDEX (order_id, status)
+  INDEX (customer_id, status)
+  INDEX (session_key, status)
+}
+
+entity "payments_paymentmethod\n(PaymentMethod)" as PaymentMethod {
+  * id : INTEGER <<PK, AUTO>>
+  --
+  # payment_id : INTEGER <<FK → payments_payment.id, OneToOne>>
+  method_type : VARCHAR(32) [default='mock']
+  provider : VARCHAR(32) [default='mock']
+  masked_account : VARCHAR(64)
+  metadata : JSON [default={}]
+  created_at : DATETIME
+}
+
+entity "payments_paymenttransaction\n(PaymentTransaction)" as PaymentTransaction {
+  * id : INTEGER <<PK, AUTO>>
+  --
+  # payment_id : INTEGER <<FK → payments_payment.id, CASCADE>>
+  transaction_type : VARCHAR(20)\n[AUTHORIZE|CAPTURE|FAIL|CANCEL|REFUND]
+  provider_reference : VARCHAR(128)
+  amount : DECIMAL(12,2)
+  status : VARCHAR(20)
+  metadata : JSON [default={}]
+  created_at : DATETIME
+  --
+  INDEX (payment_id, transaction_type)
+  INDEX (provider_reference)
+}
+
+entity "payments_paymentrefund\n(PaymentRefund)" as PaymentRefund {
+  * id : INTEGER <<PK, AUTO>>
+  --
+  # payment_id : INTEGER <<FK → payments_payment.id, CASCADE>>
+  amount : DECIMAL(12,2)
+  reason : TEXT
+  status : VARCHAR(20) [default='REFUNDED']
+  provider_reference : VARCHAR(128)
+  created_at : DATETIME
+}
+
+Payment ||--|| PaymentMethod : "payment_id (OneToOne)\nrelated_name='method'"
+Payment ||--o{ PaymentTransaction : "payment_id (ForeignKey, CASCADE)\nrelated_name='transactions'"
+Payment ||--o{ PaymentRefund : "payment_id (ForeignKey, CASCADE)\nrelated_name='refunds'"
+
+note right of Payment
+  Valid transitions (can_transition_to):
+  PENDING → PROCESSING / PAID / FAILED / CANCELLED
+  PROCESSING → PAID / FAILED / CANCELLED
+  PAID → REFUNDED
+  FAILED → (terminal)
+  CANCELLED → (terminal)
+  REFUNDED → (terminal)
+end note
+
+note right of PaymentTransaction
+  Logs each transaction step:
+  - AUTHORIZE: when payment is created
+  - CAPTURE: when confirm → PAID
+  - FAIL: when payment fails
+  - CANCEL: when payment is cancelled
+  - REFUND: when refund is processed
+end note
+
+note bottom of Payment
+  idempotency_key (UNIQUE): prevents duplicate payments.
+  If creating a payment with an existing idempotency_key is requested
+  → returns the old payment (HTTP 200), do not create a new one.
+  provider = 'mock': mock payment system, not
+  integrated with a real payment gateway.
+end note
+
+@enduml

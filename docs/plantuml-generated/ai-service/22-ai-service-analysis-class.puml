@@ -1,0 +1,238 @@
+@startuml 22-ai-service-analysis-class
+
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam defaultFontSize 11
+skinparam class {
+  FontStyle bold
+}
+
+package "Domain Layer\n(Models)" as DOMAIN {
+
+  class RecommendationRequest <<Entity>> {
+    + id : int <<PK>>
+    + user_id : int (nullable, cross-service)
+    + session_id : str (nullable)
+    + strategy : str [home|product_detail|cart]
+    + context : JSON
+    + created_at : datetime
+  }
+
+  class RecommendationResult <<Entity>> {
+    + id : int <<PK>>
+    + request : RecommendationRequest <<FK, CASCADE>>
+    + product_id : int (cross-service ref)
+    + score : float
+    + deep_model_score : float (nullable)
+    + reason_codes : JSON
+    + source_signals : JSON
+    + rank_position : int
+    + created_at : datetime
+  }
+
+  class ChatSession <<Entity>> {
+    + id : int <<PK>>
+    + user_id : int (nullable, cross-service)
+    + session_id : str (nullable)
+    + started_at : datetime
+    + last_message_at : datetime
+    + metadata : JSON
+  }
+
+  class ChatMessage <<Entity>> {
+    + id : int <<PK>>
+    + chat_session : ChatSession <<FK, CASCADE>>
+    + role : str [user|assistant]
+    + message : text
+    + retrieval_mode : str
+    + sources : JSON
+    + created_at : datetime
+  }
+}
+
+package "Application Layer\n(Services)" as APP_SVC {
+
+  class RecommendationService <<Application Service>> {
+    + recommend_home(user_id, session_id, limit) : dict
+    + recommend_product_detail(product_id, user_id, session_id, limit) : dict
+    + recommend_cart(session_id, user_id, limit) : dict
+    + get_profile_snapshot(user_id, session_id) : dict
+    + get_model_status() : dict
+    - _build_profile_snapshot(user_id, session_id) : dict
+    - _score_candidates(candidates, profile) : list
+    - _apply_deep_model(candidates, profile) : list
+    - _fetch_graph_user_interest(user_id, session_id) : list
+    - _fetch_graph_product_neighbors(product_id) : list
+    - _fetch_cart_items(session_id) : list
+  }
+
+  class ChatbotService <<Application Service>> {
+    + chat(message, user_id, session_id, ...) : dict
+    + retrieve(message, user_id, session_id, limit, ...) : dict
+    - _get_or_create_session(user_id, session_id) : ChatSession
+    - _build_context(user_id, session_id, product_id, order_id) : dict
+    - _rag_retrieve(message, context, limit) : list[Source]
+    - _call_llm(message, context, sources) : str
+    - _save_messages(session, user_msg, assistant_msg, ...) : void
+  }
+
+  class InteractionServiceClient <<External HTTP>> {
+    + get_user_interest(user_id, session_id) : list
+    + get_product_neighbors(product_id) : list
+    + get_query_paths(product_id, query_text) : list
+    + get_similar_users(user_id, session_id) : list
+    + get_profile_events(user_id, session_id) : list
+  }
+
+  class ProductServiceClient <<External HTTP>> {
+    + get_product(product_id) : dict
+    + list_products(filters) : list[dict]
+  }
+
+  class OpenAIClient <<External API>> {
+    + chat_completion(messages, context) : str
+    + embeddings(text) : list[float]
+  }
+
+  class SequenceModel <<AI Model (NumPy)>> {
+    + predict(user_sequence) : list[float]
+    + model_version : str
+    + fallback_mode : bool
+  }
+}
+
+package "Presentation Layer\n(Views, Serializers)" as PRES {
+
+  class RecommendationViewSet <<Controller>> {
+    + home(request) : Response
+    + product_detail(request) : Response
+    + cart(request) : Response
+    + profile_snapshot(request) : Response
+    - _limit(validated_data) : int
+    - _handle_service_error(exc) : Response
+    - _log_payload(request, endpoint, payload) : void
+  }
+
+  class ProfileViewSet <<Controller>> {
+    + snapshot(request) : Response
+  }
+
+  class ModelStatusViewSet <<Controller>> {
+    + status(request) : Response
+  }
+
+  class ChatViewSet <<Controller>> {
+    + create(request) : Response
+    + retrieve_context(request) : Response
+  }
+
+  class HomeRecommendationQuerySerializer <<Serializer/DTO>> {
+    + user_id : int (optional)
+    + session_id : str (optional)
+    + limit : int (optional)
+  }
+
+  class ProductDetailRecommendationQuerySerializer <<Serializer/DTO>> {
+    + product_id : int (required)
+    + user_id : int (optional)
+    + session_id : str (optional)
+    + limit : int (optional)
+  }
+
+  class CartRecommendationQuerySerializer <<Serializer/DTO>> {
+    + session_id : str (required)
+    + user_id : int (optional)
+    + limit : int (optional)
+  }
+
+  class ProfileSnapshotQuerySerializer <<Serializer/DTO>> {
+    + user_id : int (optional)
+    + session_id : str (optional)
+  }
+
+  class ChatRequestSerializer <<Serializer/DTO>> {
+    + message : str (required, max=4000)
+    + user_id : int (optional)
+    + session_id : str (optional)
+    + customer_id : int (optional)
+    + product_id : int (optional)
+    + order_id : int (optional)
+  }
+
+  class ChatRetrieveRequestSerializer <<Serializer/DTO>> {
+    + limit : int (optional)
+  }
+}
+
+RecommendationRequest "1" *-- "0..*" RecommendationResult : "request (FK CASCADE)\nrelated_name='results'"
+ChatSession "1" *-- "0..*" ChatMessage : "chat_session (FK CASCADE)\nrelated_name='messages'"
+
+RecommendationService ..> RecommendationRequest : "create log"
+RecommendationService ..> RecommendationResult : "create result log"
+RecommendationService ..> InteractionServiceClient : "fetch graph data\n(user_interest, product_neighbors)"
+RecommendationService ..> ProductServiceClient : "fetch product details"
+RecommendationService ..> SequenceModel : "deep_model_score\n(RNN/LSTM/BiLSTM/GRU/CNN/Attention)"
+
+ChatbotService ..> ChatSession : "get_or_create"
+ChatbotService ..> ChatMessage : "save user + assistant messages"
+ChatbotService ..> InteractionServiceClient : "RAG context\nfrom graph"
+ChatbotService ..> ProductServiceClient : "product context"
+ChatbotService ..> OpenAIClient : "LLM inference"
+
+RecommendationViewSet ..> RecommendationService : "delegates"
+RecommendationViewSet ..> HomeRecommendationQuerySerializer : "input"
+RecommendationViewSet ..> ProductDetailRecommendationQuerySerializer : "input"
+RecommendationViewSet ..> CartRecommendationQuerySerializer : "input"
+RecommendationViewSet ..> ProfileSnapshotQuerySerializer : "input"
+ProfileViewSet ..> RecommendationService : "get_profile_snapshot()"
+ProfileViewSet ..> ProfileSnapshotQuerySerializer : "input"
+ModelStatusViewSet ..> RecommendationService : "get_model_status()"
+ChatViewSet ..> ChatbotService : "delegates"
+ChatViewSet ..> ChatRequestSerializer : "input"
+ChatViewSet ..> ChatRetrieveRequestSerializer : "input (retrieve_context)"
+
+ChatRetrieveRequestSerializer --|> ChatRequestSerializer : "extends"
+ProductDetailRecommendationQuerySerializer --|> HomeRecommendationQuerySerializer : "extends"
+
+note right of RecommendationService
+  Recommendation Pipeline (recommend_home):
+  1. Build profile snapshot (graph + event history)
+  2. Fetch candidate products
+  3. Score candidates by signal weights
+  4. Apply SequenceModel for deep_model_score
+  5. Merge & rank results
+  6. Log RecommendationRequest + Results
+  7. Return payload {items, context}
+
+  Fallback mode:
+  If deep model errors out → fallback_mode=True
+  Only uses signal scoring.
+end note
+
+note right of ChatbotService
+  RAG Pipeline (chat):
+  1. get_or_create ChatSession
+  2. _build_context (graph, product, order)
+  3. _rag_retrieve (embedding/keyword search)
+  4. _call_llm (OpenAI API with context + sources)
+  5. Save ChatMessage (user + assistant)
+  6. Return {response, sources, retrieval_mode,
+           used_graph_context, used_realtime_api}
+
+  retrieval_mode:
+  'embedding' | 'keyword' | 'graph' | 'hybrid'
+end note
+
+note bottom of SequenceModel
+  NumPy-only implementations:
+  - RNN (Recurrent Neural Network)
+  - LSTM (Long Short-Term Memory)
+  - BiLSTM (Bidirectional LSTM)
+  - GRU (Gated Recurrent Unit)
+  - 1D-CNN (1D Convolutional)
+  - Self-Attention
+  Input: user interaction sequence
+  Output: product affinity scores
+end note
+
+@enduml

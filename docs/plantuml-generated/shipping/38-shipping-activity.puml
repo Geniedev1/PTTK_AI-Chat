@@ -1,0 +1,114 @@
+@startuml 38-shipping-activity
+title Shipping Domain — Activity Diagram
+
+start
+
+:Receive request from Client;
+
+if (Request type?) then (POST create)
+  :Validate ShipmentCreateSerializer
+  {order_id, recipient_name, phone, address, ...};
+  if (Valid?) then (no)
+    :Return 400;
+    stop
+  endif
+  :Check if Shipment already exists for order_id;
+  if (Shipment exists?) then (yes)
+    :Return 200 existing Shipment (idempotent);
+    stop
+  endif
+  :Call order-service GET /api/orders/{order_id}/;
+  if (Order exists?) then (no)
+    :Return 404;
+    stop
+  endif
+  if (order.status == PAID?) then (no)
+    :Return 400 Order unpaid;
+    stop
+  endif
+  :transaction.atomic();
+  :Create Shipment {status=PENDING};
+  :Create ShipmentAddress (address snapshot);
+  :Create ShipmentTrackingEvent "Shipment created.";
+  :Call interaction-service emit "shipment_created";
+  :Return 201 Shipment data;
+
+elseif (POST mark_ready) then (mark_ready)
+  :Get Shipment by pk;
+  :can_transition_to(READY_TO_SHIP)?;
+  if (Valid?) then (no)
+    :Return 400 Invalid transition;
+    stop
+  endif
+  :shipment.status = READY_TO_SHIP;
+  :shipment.save();
+  :Create ShipmentTrackingEvent "Ready to ship.";
+  :Call interaction-service emit "shipment_ready";
+  :Return 200 Shipment data;
+
+elseif (POST ship) then (ship)
+  :Get Shipment by pk;
+  :can_transition_to(SHIPPED)?;
+  if (Valid?) then (no)
+    :Return 400;
+    stop
+  endif
+  :tracking_number = "MOCK-" + uuid();
+  :shipment.shipped_at = now();
+  :shipment.status = SHIPPED;
+  :shipment.save();
+  :Create ShipmentTrackingEvent "Shipment shipped.";
+  :Call interaction-service emit "shipment_shipped";
+  :Return 200 Shipment data;
+
+elseif (POST deliver) then (deliver)
+  :Get Shipment by pk;
+  :can_transition_to(DELIVERED)?;
+  if (Valid?) then (no)
+    :Return 400;
+    stop
+  endif
+  :shipment.delivered_at = now();
+  :shipment.status = DELIVERED;
+  :shipment.save();
+  :Create ShipmentTrackingEvent "Delivered.";
+  :Call order-service update_status(order_id, COMPLETED);
+  :Call interaction-service emit "shipment_delivered";
+  :Return 200 Shipment data;
+
+elseif (POST cancel) then (cancel)
+  :Get Shipment by pk;
+  :can_transition_to(CANCELLED)?;
+  if (Valid?) then (no)
+    :Return 400;
+    stop
+  endif
+  :shipment.cancelled_at = now();
+  :shipment.status = CANCELLED;
+  :shipment.save();
+  :Create ShipmentTrackingEvent "Cancelled.";
+  :Call interaction-service emit "shipment_cancelled";
+  :Return 200 Shipment data;
+
+elseif (POST fail) then (fail)
+  :Validate ShipmentFailSerializer {failure_reason};
+  :can_transition_to(FAILED)?;
+  if (Valid?) then (no)
+    :Return 400;
+    stop
+  endif
+  :shipment.status = FAILED;
+  :shipment.failure_reason = reason;
+  :shipment.save();
+  :Create ShipmentTrackingEvent "Failed.";
+  :Return 200 Shipment data;
+
+else (GET list/retrieve)
+  :Filter Shipment by customer_id, session_key,
+  or tracking_number;
+  :Return 200 Shipment data (nested address + tracking_events);
+endif
+
+stop
+
+@enduml

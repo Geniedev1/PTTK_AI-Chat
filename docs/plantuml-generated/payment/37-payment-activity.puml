@@ -1,0 +1,108 @@
+@startuml 37-payment-activity
+title Payment Domain — Activity Diagram
+
+start
+
+:Receive request from Client;
+
+if (Request type?) then (POST create)
+  :Validate PaymentCreateSerializer
+  {order_id, customer_id, session_key,
+  currency, provider, method_type, idempotency_key};
+  if (Valid?) then (no)
+    :Return 400;
+    stop
+  endif
+  if (idempotency_key in request?) then (yes)
+    :Find Payment by idempotency_key;
+    if (Already exists?) then (yes)
+      :Return 200 old Payment (idempotent);
+      stop
+    endif
+  endif
+  :Call order-service GET /api/orders/{order_id}/;
+  if (Order exists?) then (no)
+    :Return 404;
+    stop
+  endif
+  if (order.status is PENDING or CONFIRMED?) then (no)
+    :Return 400 invalid Order;
+    stop
+  endif
+  :transaction.atomic();
+  :Create Payment {status=PENDING, amount=order.total};
+  :Create PaymentMethod {method_type, masked_account};
+  :Write PaymentTransaction {type=AUTHORIZE};
+  :Call interaction-service emit "payment_started";
+  :Return 201 Payment data;
+
+elseif (POST confirm) then (confirm)
+  :Get Payment by pk;
+  if (Exists?) then (no)
+    :Return 404;
+    stop
+  endif
+  :payment.can_transition_to(PAID)?;
+  if (Valid?) then (no)
+    :Return 400;
+    stop
+  endif
+  :payment.status = PAID;
+  :payment.paid_at = now();
+  :payment.save();
+  :Write PaymentTransaction {type=CAPTURE};
+  :Call order-service update_status(order_id, PAID);
+  :Call interaction-service emit "payment_paid";
+  :Return 200 Payment data;
+
+elseif (POST fail) then (fail)
+  :Validate PaymentFailSerializer {failure_reason};
+  :payment.can_transition_to(FAILED)?;
+  if (Valid?) then (no)
+    :Return 400;
+    stop
+  endif
+  :payment.status = FAILED;
+  :payment.failure_reason = reason;
+  :payment.failed_at = now();
+  :payment.save();
+  :Write PaymentTransaction {type=FAIL};
+  :Call interaction-service emit "payment_failed";
+  :Return 200 Payment data;
+
+elseif (POST cancel) then (cancel)
+  :payment.can_transition_to(CANCELLED)?;
+  if (Valid?) then (no)
+    :Return 400;
+    stop
+  endif
+  :payment.status = CANCELLED;
+  :payment.cancelled_at = now();
+  :payment.save();
+  :Write PaymentTransaction {type=CANCEL};
+  :Call interaction-service emit "payment_cancelled";
+  :Return 200 Payment data;
+
+elseif (POST refund) then (refund)
+  :Validate PaymentRefundRequestSerializer {reason};
+  :payment.can_transition_to(REFUNDED)?;
+  if (Valid?) then (no)
+    :Return 400;
+    stop
+  endif
+  :Create PaymentRefund {amount, reason};
+  :payment.status = REFUNDED;
+  :payment.refunded_at = now();
+  :payment.save();
+  :Write PaymentTransaction {type=REFUND};
+  :Call interaction-service emit "payment_refunded";
+  :Return 200 Payment data;
+
+else (GET list/retrieve)
+  :Filter Payment by customer_id or session_key;
+  :Return 200 Payment data;
+endif
+
+stop
+
+@enduml

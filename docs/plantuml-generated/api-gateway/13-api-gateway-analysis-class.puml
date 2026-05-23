@@ -1,0 +1,91 @@
+@startuml 13-api-gateway-analysis-class
+
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam defaultFontSize 11
+skinparam class {
+  FontStyle bold
+}
+
+package "Presentation Layer\n(Views & URLs)" as PRES {
+  class ProxyView <<View/Controller>> {
+    + proxy_request(request) : HttpResponse
+    + gateway_root(request) : HttpResponse
+    + gateway_health(request) : HttpResponse
+    - _resolve_backend_base(path) : str
+    - _build_forward_headers(request) : dict
+    - HOP_BY_HOP_HEADERS : set
+  }
+  note right of ProxyView
+    @csrf_exempt
+    proxy_request() is the main handler.
+    Receives all requests → resolves backend
+    → forwards → returns response to client.
+  end note
+}
+
+package "Infrastructure Layer\n(Middleware & Config)" as INFRA {
+  class CorsMiddleware <<Middleware>> {
+    - get_response : callable
+    + __init__(get_response)
+    + __call__(request) : HttpResponse
+    - _resolve_origin(request) : str
+  }
+
+  class ServiceRoutes <<Configuration>> {
+    + "/api/staff/" → "http://staff-service:8001"
+    + "/api/customers/" → "http://customer-service:8002"
+    + "/api/cart/" → "http://cart-service:8003"
+    + "/api/products/" → "http://product-service:8004"
+    + "/api/orders/" → "http://order-service:8005"
+    + "/api/interactions/" → "http://interaction-service:8006"
+    + "/api/ai/" → "http://ai-service:8007"
+    + "/api/payments/" → "http://payment-service:8008"
+    + "/api/shipping/" → "http://shipping-service:8009"
+    + PROXY_TIMEOUT : int
+    + CORS_ALLOWED_ORIGINS : list
+  }
+
+  class UpstreamService <<External>> {
+    + url : str
+    + respond(request) : Response
+  }
+}
+
+ProxyView ..> ServiceRoutes : "reads SERVICE_ROUTES\nto resolve backend URL"
+ProxyView ..> UpstreamService : "HTTP forward via requests.request()\n(GET/POST/PUT/PATCH/DELETE)"
+CorsMiddleware ..> ProxyView : "wraps (middleware chain)"
+
+note bottom of CorsMiddleware
+  Headers set in the response:
+  - Access-Control-Allow-Origin
+  - Access-Control-Allow-Credentials: true
+  - Access-Control-Allow-Methods
+  - Access-Control-Allow-Headers:
+    Authorization, X-Cart-Session-Key,
+    X-Internal-Admin-Key, ...
+  - Access-Control-Expose-Headers:
+    X-Request-ID, X-Cart-Session-Key
+  OPTIONS → 204 No Content (preflight)
+end note
+
+note bottom of ProxyView
+  _resolve_backend_base():
+  Iterates through SERVICE_ROUTES, matching prefix path.
+  No match → 404 "No upstream service matched."
+
+  _build_forward_headers():
+  Forwards all headers from client,
+  omitting hop-by-hop headers.
+  Thêm: X-Forwarded-For, X-Real-IP, X-Forwarded-Proto.
+end note
+
+note right of ServiceRoutes
+  API Gateway does not have:
+  - Database
+  - Authentication logic
+  - Business logic
+  Just a transparent proxy (Proxy Pattern).
+end note
+
+@enduml

@@ -1,0 +1,108 @@
+@startuml 46-payment-sequence
+title Payment Domain - Sequence Diagram
+
+participant Client
+participant PaymentViewSet
+participant OrderService
+participant InteractionService
+database PaymentDB
+
+== Create Payment ==
+
+Client -> PaymentViewSet : POST /api/payments/\n{order_id, customer_id, idempotency_key, ...}
+PaymentViewSet -> PaymentViewSet : validate PaymentCreateSerializer
+
+alt validation failed
+  PaymentViewSet --> Client : 400 Bad Request
+else valid
+  alt idempotency_key provided
+    PaymentViewSet -> PaymentDB : Payment.filter(idempotency_key)
+    PaymentDB --> PaymentViewSet : existing payment or none
+
+    alt payment already exists
+      PaymentViewSet --> Client : 200 Existing payment (idempotent)
+    end
+  end
+
+  PaymentViewSet -> OrderService : GET /api/orders/{order_id}/
+  OrderService --> PaymentViewSet : order data
+
+  alt order not found
+    PaymentViewSet --> Client : 404 Order not found
+  else order status invalid
+    PaymentViewSet --> Client : 400 Order cannot be paid
+  else order is PENDING or CONFIRMED
+    PaymentViewSet -> PaymentDB : transaction.atomic()
+    PaymentViewSet -> PaymentDB : Payment.create(status=PENDING, amount=order.total)
+    PaymentDB --> PaymentViewSet : payment
+    PaymentViewSet -> PaymentDB : PaymentMethod.create(payment, method_type)
+    PaymentDB --> PaymentViewSet : method
+    PaymentViewSet -> PaymentDB : PaymentTransaction.create(type=AUTHORIZE)
+    PaymentDB --> PaymentViewSet : transaction
+    PaymentViewSet -> InteractionService : emit payment_started event
+    InteractionService --> PaymentViewSet : ok
+    PaymentViewSet --> Client : 201 Payment data
+  end
+end
+
+== Confirm Payment ==
+
+Client -> PaymentViewSet : POST /api/payments/{id}/confirm/
+PaymentViewSet -> PaymentDB : Payment.objects.get(pk=id)
+PaymentDB --> PaymentViewSet : payment
+
+alt payment not found
+  PaymentViewSet --> Client : 404 Not Found
+else invalid transition
+  PaymentViewSet --> Client : 400 Cannot confirm
+else valid
+  PaymentViewSet -> PaymentDB : payment.status = PAID; paid_at = now()
+  PaymentViewSet -> PaymentDB : payment.save()
+  PaymentViewSet -> PaymentDB : PaymentTransaction.create(type=CAPTURE)
+  PaymentDB --> PaymentViewSet : saved
+  PaymentViewSet -> OrderService : POST /api/orders/{order_id}/update_status/\n{status: PAID}
+  OrderService --> PaymentViewSet : order updated
+  PaymentViewSet -> InteractionService : emit payment_paid event
+  InteractionService --> PaymentViewSet : ok
+  PaymentViewSet --> Client : 200 Payment data
+end
+
+== Fail Payment ==
+
+Client -> PaymentViewSet : POST /api/payments/{id}/fail/\n{failure_reason}
+PaymentViewSet -> PaymentDB : Payment.objects.get(pk=id)
+PaymentDB --> PaymentViewSet : payment
+
+alt invalid transition
+  PaymentViewSet --> Client : 400 Cannot fail
+else valid
+  PaymentViewSet -> PaymentDB : payment.status = FAILED; failed_at = now()
+  PaymentViewSet -> PaymentDB : payment.failure_reason = reason
+  PaymentViewSet -> PaymentDB : payment.save()
+  PaymentViewSet -> PaymentDB : PaymentTransaction.create(type=FAIL)
+  PaymentDB --> PaymentViewSet : saved
+  PaymentViewSet -> InteractionService : emit payment_failed event
+  InteractionService --> PaymentViewSet : ok
+  PaymentViewSet --> Client : 200 Payment data
+end
+
+== Refund Payment ==
+
+Client -> PaymentViewSet : POST /api/payments/{id}/refund/\n{reason}
+PaymentViewSet -> PaymentDB : Payment.objects.get(pk=id)
+PaymentDB --> PaymentViewSet : payment
+
+alt invalid transition
+  PaymentViewSet --> Client : 400 Cannot refund
+else valid
+  PaymentViewSet -> PaymentDB : PaymentRefund.create(amount, reason)
+  PaymentViewSet -> PaymentDB : payment.status = REFUNDED; refunded_at = now()
+  PaymentViewSet -> PaymentDB : payment.save()
+  PaymentViewSet -> PaymentDB : PaymentTransaction.create(type=REFUND)
+  PaymentDB --> PaymentViewSet : saved
+  PaymentViewSet -> InteractionService : emit payment_refunded event
+  InteractionService --> PaymentViewSet : ok
+  PaymentViewSet --> Client : 200 Payment data
+end
+
+@enduml

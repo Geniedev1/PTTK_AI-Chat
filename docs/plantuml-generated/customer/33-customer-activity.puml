@@ -1,0 +1,82 @@
+@startuml 33-customer-activity
+title Customer Domain — Activity Diagram
+
+start
+
+:Receive request from Client;
+
+if (Request type?) then (register)
+  :Read {username, password, email, phone, address, city, country};
+  if (Data valid?) then (no)
+    :Return 400 Bad Request;
+    stop
+  endif
+  if (Username already exists?) then (yes)
+    :Return 400 ValidationError;
+    stop
+  endif
+  :transaction.atomic();
+  :Create User (create_user);
+  :Create Customer (link user);
+  :Return 201 {message};
+
+elseif (login) then (login)
+  :Read {username, password};
+  :authenticate(username, password);
+  if (Authentication successful?) then (no)
+    :Return 401 Invalid credentials;
+    stop
+  endif
+  if (is_active?) then (no)
+    :Return 403 Account disabled;
+    stop
+  endif
+  :Token.get_or_create(user);
+  :Return 200 {token, customer};
+
+elseif (profile GET) then (profile)
+  :Check IsAuthenticated;
+  if (Token valid?) then (no)
+    :Return 401;
+    stop
+  endif
+  :Get Customer from request.user;
+  :Serialize (user + phone + address);
+  :Return 200 Customer profile;
+
+elseif (profile PUT) then (update profile)
+  :Check IsAuthenticated;
+  if (Token valid?) then (no)
+    :Return 401;
+    stop
+  endif
+  :Read {phone, address, city, country};
+  :Validate CustomerProfileSerializer;
+  if (Data valid?) then (no)
+    :Return 400;
+    stop
+  endif
+  :customer.phone = data.phone;
+  :customer.address = data.address;
+  :customer.city = data.city;
+  :customer.country = data.country;
+  :customer.save();
+  :Return 200 Updated profile;
+
+else (retrieve by ID)
+  :Check InternalAdminPermission;
+  if (Authorized?) then (no)
+    :Return 403;
+    stop
+  endif
+  :Customer.objects.get(pk=id);
+  if (Exists?) then (no)
+    :Return 404;
+    stop
+  endif
+  :Return 200 Customer detail;
+endif
+
+stop
+
+@enduml

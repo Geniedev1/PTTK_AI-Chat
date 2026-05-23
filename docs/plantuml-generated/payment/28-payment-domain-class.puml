@@ -1,0 +1,105 @@
+@startuml 28-payment-domain-class
+title Payment Domain - Design Class Diagram
+
+class Payment {
+  + id : int
+  + order_id : int
+  + customer_id : int
+  + session_key : str
+  + amount : str
+  + currency : str
+  + provider : str
+  + status : str
+  + failure_reason : str
+  + idempotency_key : str
+  + paid_at : str
+  + failed_at : str
+  + cancelled_at : str
+  + refunded_at : str
+  + created_at : str
+  + updated_at : str
+  + can_transition_to(new_status) : bool
+}
+
+class PaymentMethod {
+  + id : int
+  + method_type : str
+  + provider : str
+  + masked_account : str
+  + metadata : str
+  + created_at : str
+}
+
+class PaymentTransaction {
+  + id : int
+  + transaction_type : str
+  + provider_reference : str
+  + amount : str
+  + status : str
+  + metadata : str
+  + created_at : str
+}
+
+class PaymentRefund {
+  + id : int
+  + amount : str
+  + reason : str
+  + status : str
+  + provider_reference : str
+  + created_at : str
+}
+
+class OrderServiceClient {
+  + fetch_order(order_id) : dict
+  + update_order_status(order_id, status) : bool
+}
+
+class InteractionServiceClient {
+  + emit_event(event_type, data) : bool
+}
+
+class PaymentSerializer {
+  + id : int
+  + order_id : int
+  + amount : str
+  + status : str
+}
+
+class PaymentCreateSerializer {
+  + order_id : int
+  + customer_id : int
+  + session_key : str
+  + currency : str
+  + provider : str
+  + idempotency_key : str
+}
+
+class PaymentFailSerializer {
+  + failure_reason : str
+}
+
+class PaymentViewSet {
+  + list(request) : Response
+  + retrieve(request, pk) : Response
+  + create(request) : Response
+  + confirm(request, pk) : Response
+  + fail(request, pk) : Response
+  + cancel(request, pk) : Response
+  + refund(request, pk) : Response
+}
+
+Payment "1" -- "1" PaymentMethod
+Payment "1" -- "0..*" PaymentTransaction
+Payment "1" -- "0..*" PaymentRefund
+
+PaymentViewSet ..> Payment
+PaymentViewSet ..> PaymentMethod
+PaymentViewSet ..> PaymentTransaction
+PaymentViewSet ..> PaymentRefund
+PaymentViewSet ..> OrderServiceClient
+PaymentViewSet ..> InteractionServiceClient
+PaymentViewSet ..> PaymentSerializer
+PaymentViewSet ..> PaymentCreateSerializer
+PaymentViewSet ..> PaymentFailSerializer
+
+@enduml

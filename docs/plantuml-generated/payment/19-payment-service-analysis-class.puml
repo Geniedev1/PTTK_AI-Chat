@@ -1,0 +1,206 @@
+@startuml 19-payment-service-analysis-class
+
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam defaultFontSize 11
+skinparam class {
+  FontStyle bold
+}
+
+package "Domain Layer\n(Models)" as DOMAIN {
+
+  enum PaymentStatus <<enum>> {
+    PENDING
+    PROCESSING
+    PAID
+    FAILED
+    CANCELLED
+    REFUNDED
+  }
+
+  enum TransactionType <<enum>> {
+    AUTHORIZE
+    CAPTURE
+    FAIL
+    CANCEL
+    REFUND
+  }
+
+  class Payment <<Entity>> {
+    + id : int <<PK>>
+    + order_id : int (cross-service ref)
+    + customer_id : int (nullable, cross-service)
+    + session_key : str (nullable)
+    + amount : Decimal
+    + currency : str
+    + provider : str
+    + provider_reference : str
+    + status : PaymentStatus
+    + failure_reason : text
+    + idempotency_key : str (unique, nullable)
+    + paid_at : datetime (nullable)
+    + failed_at : datetime (nullable)
+    + cancelled_at : datetime (nullable)
+    + refunded_at : datetime (nullable)
+    + created_at : datetime
+    + updated_at : datetime
+    --
+    + can_transition_to(new_status) : bool
+  }
+
+  class PaymentMethod <<Entity>> {
+    + id : int <<PK>>
+    + payment : Payment <<OneToOne>>
+    + method_type : str
+    + provider : str
+    + masked_account : str
+    + metadata : JSON
+    + created_at : datetime
+  }
+
+  class PaymentTransaction <<Entity>> {
+    + id : int <<PK>>
+    + payment : Payment <<FK, CASCADE>>
+    + transaction_type : TransactionType
+    + provider_reference : str
+    + amount : Decimal
+    + status : str
+    + metadata : JSON
+    + created_at : datetime
+  }
+
+  class PaymentRefund <<Entity>> {
+    + id : int <<PK>>
+    + payment : Payment <<FK, CASCADE>>
+    + amount : Decimal
+    + reason : text
+    + status : str
+    + provider_reference : str
+    + created_at : datetime
+  }
+}
+
+package "Presentation & Application Layer\n(Views, Serializers)" as APP {
+
+  class PaymentViewSet <<Controller>> {
+    + list(request) : Response
+    + retrieve(request, pk) : Response
+    + create(request) : Response
+    + confirm(request, pk) : Response
+    + fail(request, pk) : Response
+    + cancel(request, pk) : Response
+    + refund(request, pk) : Response
+    - _scoped_queryset(request) : QuerySet
+    - _fetch_order(order_id, ...) : (dict, Response)
+    - _update_order_status(payment, new_status) : Response
+    - _transition(payment, new_status, ...) : bool
+    - _record_transaction(payment, type, ...) : void
+    - _order_headers(session_key) : dict
+  }
+
+  class OrderServiceClient <<External HTTP>> {
+    + get_order(order_id) : dict
+    + update_status(order_id, status) : void
+  }
+
+  class InteractionTracker <<Cross-cutting>> {
+    + emit_payment_started(payment)
+    + emit_payment_paid(payment)
+    + emit_payment_failed(payment)
+    + emit_payment_cancelled(payment)
+    + emit_payment_refunded(payment)
+  }
+
+  class PaymentSerializer <<Serializer/DTO>> {
+    + id; order_id; customer_id; session_key
+    + amount; currency; provider; provider_reference
+    + status; failure_reason; idempotency_key
+    + paid_at; failed_at; cancelled_at; refunded_at
+    + method : PaymentMethodSerializer (nested)
+    + transactions : PaymentTransactionSerializer[] (nested)
+    + refunds : PaymentRefundSerializer[] (nested)
+    + created_at; updated_at
+  }
+
+  class PaymentCreateSerializer <<Serializer/DTO>> {
+    + order_id : int (required)
+    + customer_id : int (optional)
+    + session_key : str (optional)
+    + currency : str (default=USD)
+    + provider : str (default=mock)
+    + method_type : str (default=mock)
+    + masked_account : str (optional)
+    + idempotency_key : str (optional)
+    --
+    + validate(attrs) : dict
+  }
+
+  class PaymentMethodSerializer <<Serializer/DTO>> {
+    + id; method_type; provider
+    + masked_account; metadata; created_at
+  }
+
+  class PaymentTransactionSerializer <<Serializer/DTO>> {
+    + id; transaction_type; provider_reference
+    + amount; status; metadata; created_at
+  }
+
+  class PaymentRefundSerializer <<Serializer/DTO>> {
+    + id; amount; reason; status
+    + provider_reference; created_at
+  }
+
+  class PaymentFailSerializer <<Serializer/DTO>> {
+    + failure_reason : str (optional)
+  }
+
+  class PaymentRefundRequestSerializer <<Serializer/DTO>> {
+    + reason : str (optional)
+  }
+}
+
+Payment "1" -- "1" PaymentMethod : "OneToOne (related_name='method')"
+Payment "1" *-- "0..*" PaymentTransaction : "FK CASCADE (related_name='transactions')"
+Payment "1" *-- "0..*" PaymentRefund : "FK CASCADE (related_name='refunds')"
+Payment ..> PaymentStatus : "uses"
+PaymentTransaction ..> TransactionType : "uses"
+
+PaymentViewSet ..> Payment : "CRUD + state transitions"
+PaymentViewSet ..> PaymentMethod : "create on payment create"
+PaymentViewSet ..> PaymentTransaction : "_record_transaction()"
+PaymentViewSet ..> PaymentRefund : "create on refund"
+PaymentViewSet ..> OrderServiceClient : "fetch order, update status"
+PaymentViewSet ..> InteractionTracker : "emit events"
+PaymentViewSet ..> PaymentSerializer : "output"
+PaymentViewSet ..> PaymentCreateSerializer : "input (create)"
+PaymentViewSet ..> PaymentFailSerializer : "input (fail)"
+PaymentViewSet ..> PaymentRefundRequestSerializer : "input (refund)"
+PaymentSerializer ..> PaymentMethodSerializer : "nested"
+PaymentSerializer ..> PaymentTransactionSerializer : "nested"
+PaymentSerializer ..> PaymentRefundSerializer : "nested"
+
+note right of Payment
+  can_transition_to() — State Machine:
+  PENDING → PROCESSING, PAID, FAILED, CANCELLED
+  PROCESSING → PAID, FAILED, CANCELLED
+  PAID → REFUNDED
+  FAILED → (terminal)
+  CANCELLED → (terminal)
+  REFUNDED → (terminal)
+end note
+
+note bottom of PaymentViewSet
+  Idempotency:
+  If create() with an existing idempotency_key is requested
+  → return existing payment (HTTP 200), do not create a new one.
+
+  confirm() → _transition(PAID)
+    → _update_order_status(order, "PAID")
+    → _record_transaction(CAPTURE)
+    → emit interaction: payment_paid
+
+  _record_transaction() logs every step:
+  AUTHORIZE → CAPTURE / FAIL / CANCEL / REFUND
+end note
+
+@enduml

@@ -1,0 +1,122 @@
+@startuml 24-customer-domain-class
+title Customer Domain - Design Class Diagram
+
+class User {
+  + id : int PK
+  + username : CharField unique
+  + email : EmailField
+  + password : CharField
+  + is_active : bool
+  --
+  + check_password(raw) : bool
+}
+
+class Token {
+  + key : CharField PK
+  + created : DateTimeField
+  --
+  + user : FK to User OneToOne
+}
+
+class Customer {
+  + id : int PK
+  + phone : CharField
+  + address : TextField
+  + city : CharField
+  + country : CharField
+  + created_at : DateTimeField
+  + updated_at : DateTimeField
+  --
+  + user : FK to User OneToOne CASCADE
+}
+
+class CustomerProfile {
+  + id : int PK
+  + full_name : CharField
+  + date_of_birth : DateField nullable
+  + gender : CharField
+  + marketing_opt_in : bool
+  + updated_at : DateTimeField
+  --
+  + customer : FK to Customer OneToOne CASCADE
+}
+
+class CustomerAddress {
+  + id : int PK
+  + recipient_name : CharField
+  + phone : CharField
+  + address : TextField
+  + city : CharField
+  + country : CharField
+  + is_default : bool
+  + created_at : DateTimeField
+  + updated_at : DateTimeField
+  --
+  + customer : FK to Customer CASCADE
+}
+
+class CustomerActivityLog {
+  + id : int PK
+  + event_type : CharField
+  + metadata : JSONField
+  + created_at : DateTimeField
+  --
+  + customer : FK to Customer SET_NULL nullable
+}
+
+class UserSerializer {
+  + fields : id, username, email
+}
+
+class CustomerSerializer {
+  + fields : id, user, phone, address, city, country
+  + user : UserSerializer nested
+}
+
+class CustomerRegisterSerializer {
+  + username : CharField
+  + password : CharField
+  + email : EmailField
+  + phone : CharField optional
+  + address : CharField optional
+  + city : CharField optional
+  + country : CharField optional
+  --
+  + validate_username(value) : str
+  + create(validated_data) : Customer
+}
+
+class CustomerLoginSerializer {
+  + username : CharField
+  + password : CharField
+}
+
+class CustomerProfileSerializer {
+  + fields : id, user, phone, address, city, country
+  + user : UserSerializer nested
+}
+
+class CustomerViewSet {
+  + register(request) : Response
+  + login(request) : Response
+  + profile(request) : Response
+  + update_profile(request) : Response
+  + retrieve(request, pk) : Response
+}
+
+User "1" -- "1" Customer
+User "1" -- "0..1" Token
+Customer "1" -- "0..1" CustomerProfile
+Customer "1" o-- "0..*" CustomerAddress
+Customer "1" o-- "0..*" CustomerActivityLog
+
+CustomerViewSet ..> Customer
+CustomerViewSet ..> Token
+CustomerViewSet ..> CustomerSerializer
+CustomerViewSet ..> CustomerRegisterSerializer
+CustomerViewSet ..> CustomerLoginSerializer
+CustomerViewSet ..> CustomerProfileSerializer
+CustomerSerializer ..> UserSerializer
+CustomerProfileSerializer ..> UserSerializer
+
+@enduml

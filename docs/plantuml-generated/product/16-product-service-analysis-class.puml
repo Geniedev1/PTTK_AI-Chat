@@ -1,0 +1,254 @@
+@startuml 16-product-service-analysis-class
+
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam defaultFontSize 11
+skinparam class {
+  FontStyle bold
+}
+
+package "Domain Layer\n(domain/entities/, domain/value_objects/)" as DOMAIN {
+
+  class Product <<Entity (frozen dataclass)>> {
+    + id : int | None
+    + name : str
+    + slug : str
+    + short_description : str
+    + description : str
+    + category_id : int | None
+    + brand_id : int | None
+    + product_type_id : int | None
+    + base_price : Decimal
+    + stock : int
+    + attributes : Attributes
+    + is_active : bool
+    + tags : list[str]
+    + image_urls : list[str]
+    + variants : list[Variant]
+    --
+    + has_stock() : bool
+    + status() : str
+  }
+
+  class Variant <<Entity (frozen dataclass)>> {
+    + id : int | None
+    + sku : str
+    + name : str
+    + attributes : dict
+    + stock : int
+    + price_override : Decimal | None
+    + is_default : bool
+  }
+
+  class Category <<Entity (frozen dataclass)>> {
+    + id : int | None
+    + name : str
+    + slug : str
+    + parent_id : int | None
+  }
+
+  class Brand <<Entity (frozen dataclass)>> {
+    + id : int | None
+    + name : str
+    + slug : str
+  }
+
+  class ProductType <<Entity (frozen dataclass)>> {
+    + id : int | None
+    + code : str
+    + name : str
+    + description : str
+  }
+
+  class Attributes <<Value Object>> {
+    + data : dict
+    + as_dict() : dict
+  }
+
+  class Sku <<Value Object>> {
+    + value : str
+  }
+}
+
+package "Application Layer\n(application/services/, commands/, queries/)" as APP {
+
+  class ProductApplicationService <<Service>> {
+    + repository : IProductRepository
+    --
+    + create_product(command: CreateProductCommand) : Product
+    + update_product(id, command: UpdateProductCommand) : Product
+    + get_product(query: GetProductQuery) : Product
+    + list_products(query: ListProductsQuery) : list[Product]
+    + filter_products(query: FilterProductsQuery) : list[Product]
+    + delete_product(product_id: int) : bool
+    + create_variant(product_id, command: CreateVariantCommand) : Variant
+  }
+
+  class CreateProductCommand <<Command/DTO>> {
+    name; slug; short_description; description
+    category_id; brand_id; product_type_id
+    base_price; stock; attributes; is_active; tags; image_urls
+  }
+
+  class UpdateProductCommand <<Command/DTO>> {
+    name; slug; base_price; stock; is_active; ...
+  }
+
+  class CreateVariantCommand <<Command/DTO>> {
+    sku; name; attributes; stock; price_override; is_default
+  }
+
+  class GetProductQuery <<Query/DTO>> {
+    product_id : int
+  }
+
+  class ListProductsQuery <<Query/DTO>> {
+    include_inactive : bool
+  }
+
+  class FilterProductsQuery <<Query/DTO>> {
+    category_id; product_type_id; brand_id
+    in_stock; search; min_price; max_price
+    sort_by; tag
+  }
+}
+
+package "Infrastructure Layer\n(infrastructure/models/, repositories/)" as INFRA {
+
+  class ProductModel <<ORM Model>> {
+    id; name; slug; short_description; description
+    category (FK→CategoryModel, nullable)
+    brand (FK→BrandModel, nullable)
+    product_type (FK→ProductTypeModel, nullable)
+    base_price; stock; attributes; tags; image_urls
+    is_active; created_at; updated_at
+  }
+
+  class CategoryModel <<ORM Model>> {
+    id; name; slug
+    parent (FK→self, nullable)
+  }
+
+  class BrandModel <<ORM Model>> {
+    id; name; slug
+  }
+
+  class ProductTypeModel <<ORM Model>> {
+    id; code; name; description
+  }
+
+  class VariantModel <<ORM Model>> {
+    id; product (FK→ProductModel)
+    sku; name; attributes; stock
+    price_override; is_default
+    created_at; updated_at
+  }
+
+  class DjangoProductRepository <<Repository>> {
+    + get_by_id(product_id) : Product
+    + list(filters: dict) : list[Product]
+    + create(entity: Product) : Product
+    + update(product_id, entity: Product) : Product
+    + delete(product_id) : bool
+    + create_variant(product_id, entity: Variant) : Variant
+    - _to_entity(model: ProductModel) : Product
+    - _from_entity(entity: Product) : dict
+  }
+}
+
+package "Presentation Layer\n(presentation/api/)" as PRES {
+
+  class ProductViewSet <<Controller>> {
+    + service : ProductApplicationService
+    + list(request) : Response
+    + retrieve(request, pk) : Response
+    + create(request) : Response
+    + update(request, pk) : Response
+    + destroy(request, pk) : Response
+    + search(request) : Response
+    + in_stock(request) : Response
+    + variants(request, pk) : Response
+    - _serialize_product(product) : dict
+    - _build_filter_query(request) : FilterProductsQuery
+  }
+
+  class CategoryViewSet <<Controller>> {
+    + list(request) : Response
+    + retrieve(request, pk) : Response
+  }
+
+  class CatalogWritePermission <<Permission>> {
+    + has_permission(request, view) : bool
+  }
+
+  class ProductReadSerializer <<Serializer/DTO>> {
+    id; name; slug; short_description
+    base_price; stock; status; is_active
+    category_id; brand_id; product_type_id
+    tags; image_urls; has_stock; variants
+  }
+
+  class ProductWriteSerializer <<Serializer/DTO>> {
+    name; slug; short_description; description
+    category_id; brand_id; product_type_id
+    base_price; stock; attributes; is_active
+    tags; image_urls
+  }
+
+  class VariantSerializer <<Serializer/DTO>> {
+    sku; name; attributes; stock
+    price_override; is_default
+  }
+}
+
+Product "1" *-- "0..*" Variant : "variants (composed)"
+Product ..> Attributes : "uses"
+Product ..> Category : "category_id (reference)"
+Product ..> Brand : "brand_id (reference)"
+Product ..> ProductType : "product_type_id (reference)"
+Variant ..> Sku : "validates SKU"
+
+ProductApplicationService ..> Product : "creates/updates entity"
+ProductApplicationService ..> Variant : "creates variant entity"
+ProductApplicationService ..> CreateProductCommand : "uses"
+ProductApplicationService ..> UpdateProductCommand : "uses"
+ProductApplicationService ..> CreateVariantCommand : "uses"
+ProductApplicationService ..> GetProductQuery : "uses"
+ProductApplicationService ..> FilterProductsQuery : "uses"
+ProductApplicationService ..> ListProductsQuery : "uses"
+
+DjangoProductRepository ..> ProductModel : "reads/writes ORM"
+DjangoProductRepository ..> Product : "maps to/from entity"
+ProductModel "1" o-- "0..*" VariantModel : "product FK"
+CategoryModel "1" o-- "0..*" CategoryModel : "parent (self-ref)"
+CategoryModel "1" o-- "0..*" ProductModel : "category FK"
+BrandModel "1" o-- "0..*" ProductModel : "brand FK"
+ProductTypeModel "1" o-- "0..*" ProductModel : "product_type FK"
+
+ProductViewSet ..> ProductApplicationService : "uses service"
+ProductViewSet ..> CatalogWritePermission : "permission_class"
+ProductViewSet ..> ProductReadSerializer : "output DTO"
+ProductViewSet ..> ProductWriteSerializer : "input DTO"
+ProductViewSet ..> VariantSerializer : "variant I/O"
+ProductApplicationService ..> DjangoProductRepository : "depends on (injected)"
+
+note right of ProductApplicationService
+  Constructor: __init__(repository)
+  Dependency injection:
+  ProductViewSet injects DjangoProductRepository
+  → ProductApplicationService(DjangoProductRepository())
+
+  Pattern CQRS (partial):
+  - Commands: create/update/delete → write
+  - Queries: get/list/filter → read
+end note
+
+note bottom of ProductViewSet
+  emit_request_event() on:
+  - retrieve() → "product_viewed"
+  - list()/search() → "search_performed"
+  Sends HTTP POST → interaction-service
+  to record user interactions.
+end note
+
+@enduml

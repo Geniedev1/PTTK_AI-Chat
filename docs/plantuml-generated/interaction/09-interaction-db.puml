@@ -1,0 +1,120 @@
+@startuml 09-interaction-db
+
+skinparam linetype ortho
+skinparam entity {
+  FontStyle bold
+}
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam defaultFontSize 11
+
+entity "interactions_interactionevent\n(InteractionEvent)" as InteractionEvent {
+  * id : INTEGER <<PK, AUTO>>
+  --
+  event_id : UUID <<UNIQUE, editable=False>>
+  event_type : VARCHAR(64)\n[search_performed|product_clicked\n|product_viewed|cart_viewed\n|cart_item_added|cart_item_removed\n|cart_item_quantity_updated\n|checkout_started|order_created\n|order_paid|order_cancelled\n|order_completed|payment_started\n|payment_paid|payment_failed\n|payment_cancelled|payment_refunded\n|shipment_created|shipment_ready\n|shipment_shipped|shipment_delivered\n|shipment_failed|shipment_cancelled\n|chat_started|chat_message_sent]
+  user_id : INTEGER <<nullable, INDEX>>\n(denormalized - cross-service)
+  session_id : VARCHAR(64) <<nullable, INDEX>>
+  product_id : INTEGER <<nullable, INDEX>>\n(denormalized - cross-service)
+  query_text : VARCHAR(255) <<nullable>>
+  source : VARCHAR(32) [default='backend']
+  signal_weight : INTEGER [default=0]
+  timestamp : DATETIME <<INDEX>>
+  metadata : JSON [default={}]
+  created_at : DATETIME
+  --
+  INDEX (event_type, timestamp)
+  INDEX (user_id, timestamp)
+  INDEX (product_id, timestamp)
+  ORDER BY -timestamp, -id
+}
+
+entity "interactions_behaviorprofile\n(BehaviorProfile)" as BehaviorProfile {
+  * id : INTEGER <<PK, AUTO>>
+  --
+  user_id : INTEGER <<nullable, INDEX>>\n(denormalized - cross-service)
+  session_id : VARCHAR(64) <<nullable, INDEX>>
+  profile_json : JSON [default={}]
+  event_count : INTEGER [default=0]
+  last_event_at : DATETIME <<nullable>>
+  updated_at : DATETIME
+  created_at : DATETIME
+  --
+  INDEX (user_id, session_id)
+  ORDER BY -updated_at
+}
+
+entity "interactions_searchquerylog\n(SearchQueryLog)" as SearchQueryLog {
+  * id : INTEGER <<PK, AUTO>>
+  --
+  user_id : INTEGER <<nullable, INDEX>>
+  session_id : VARCHAR(64) <<nullable, INDEX>>
+  query_text : VARCHAR(255)
+  result_count : INTEGER [default=0]
+  product_ids : JSON [default=[]]
+  created_at : DATETIME
+  --
+  INDEX (query_text)
+  INDEX (created_at)
+}
+
+entity "interactions_eventaggregate\n(EventAggregate)" as EventAggregate {
+  * id : INTEGER <<PK, AUTO>>
+  --
+  metric_name : VARCHAR(100)
+  metric_date : DATE
+  dimension : VARCHAR(100)
+  metric_value : INTEGER [default=0]
+  metadata : JSON [default={}]
+  updated_at : DATETIME
+  --
+  UNIQUE (metric_name, metric_date, dimension)
+}
+
+InteractionEvent ..o{ BehaviorProfile : "user_id / session_id\n(logical link - no FK)\nauto-update on event creation"
+InteractionEvent ..o{ SearchQueryLog : "event_type='search_performed'\n→ creates SearchQueryLog"
+InteractionEvent ..o{ EventAggregate : "metric_name='event_type:<type>'\nauto-increment metric_value"
+
+note right of InteractionEvent
+  signal_weight automatically assigned on save():
+  search_performed = 1
+  product_clicked = 2
+  product_viewed = 1
+  cart_viewed = 1
+  cart_item_added = 4
+  cart_item_removed = 1
+  cart_item_quantity_updated = 3
+  checkout_started = 4
+  order_created = 5
+  order_paid = 6
+  order_cancelled = -2
+  order_completed = 6
+  payment_started = 3
+  payment_paid = 6
+  payment_failed = -2
+  shipment_delivered = 4
+  chat_message_sent = 2
+  ... (see constants.py)
+end note
+
+note bottom of InteractionEvent
+  When GRAPH_SYNC_ON_WRITE=true:
+  After saving InteractionEvent → automatically
+  calls KnowledgeGraphStore.sync_interaction_event()
+  to sync to Neo4j Knowledge Graph.
+end note
+
+note right of BehaviorProfile
+  Upsert by (user_id, session_id).
+  event_count++ on each InteractionEvent.
+  profile_json: aggregated behavior data.
+end note
+
+note right of EventAggregate
+  metric_name = 'event_type:<event_type>'
+  dimension = source (backend/frontend/...)
+  metric_date = event date.
+  UniqueConstraint: (metric_name, metric_date, dimension)
+end note
+
+@enduml

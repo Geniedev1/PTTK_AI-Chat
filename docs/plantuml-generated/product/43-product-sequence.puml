@@ -1,0 +1,85 @@
+@startuml 43-product-sequence
+title Product Domain - Sequence Diagram (DDD)
+
+participant Client
+participant ProductViewSet
+participant CatalogWritePermission
+participant ProductApplicationService
+participant DjangoProductRepository
+database ProductDB
+participant InteractionServiceClient
+
+== Get Product List with Filter ==
+
+Client -> ProductViewSet : GET /api/products/?search=keyboard&category_id=1
+ProductViewSet -> ProductViewSet : build FilterProductsQuery
+ProductViewSet -> ProductApplicationService : filter_products(query)
+ProductApplicationService -> DjangoProductRepository : list(filters)
+DjangoProductRepository -> ProductDB : SELECT with WHERE clauses
+ProductDB --> DjangoProductRepository : queryset
+DjangoProductRepository -> DjangoProductRepository : _to_entity(model) for each row
+DjangoProductRepository --> ProductApplicationService : list[Product]
+ProductApplicationService --> ProductViewSet : list[Product]
+ProductViewSet -> InteractionServiceClient : emit search_performed event
+InteractionServiceClient --> ProductViewSet : ok
+ProductViewSet --> Client : 200 [product list]
+
+== Get Product Detail ==
+
+Client -> ProductViewSet : GET /api/products/{id}/
+ProductViewSet -> ProductApplicationService : get_product(product_id)
+ProductApplicationService -> DjangoProductRepository : get_by_id(id)
+DjangoProductRepository -> ProductDB : SELECT with prefetch variants
+ProductDB --> DjangoProductRepository : ProductModel + VariantModels
+DjangoProductRepository --> ProductApplicationService : Product entity
+ProductApplicationService --> ProductViewSet : Product
+
+alt product not found
+  ProductViewSet --> Client : 404 Not Found
+else found
+  ProductViewSet -> InteractionServiceClient : emit product_viewed event
+  InteractionServiceClient --> ProductViewSet : ok
+  ProductViewSet --> Client : 200 Product detail
+end
+
+== Create Product (Admin) ==
+
+Client -> ProductViewSet : POST /api/products/\n{name, base_price, stock, ...}
+ProductViewSet -> CatalogWritePermission : has_permission(request)
+
+alt permission denied
+  ProductViewSet --> Client : 403 Forbidden
+else permitted
+  ProductViewSet -> ProductViewSet : validate ProductWriteSerializer
+  alt validation failed
+    ProductViewSet --> Client : 400 Bad Request
+  else valid
+    ProductViewSet -> ProductApplicationService : create_product(CreateProductCommand)
+    ProductApplicationService -> DjangoProductRepository : create(entity)
+    DjangoProductRepository -> ProductDB : INSERT INTO catalog_products
+    ProductDB --> DjangoProductRepository : ProductModel
+    DjangoProductRepository --> ProductApplicationService : Product entity
+    ProductApplicationService --> ProductViewSet : Product
+    ProductViewSet --> Client : 201 Product data
+  end
+end
+
+== Create Variant ==
+
+Client -> ProductViewSet : POST /api/products/{id}/variants/\n{sku, name, stock, price_override}
+ProductViewSet -> CatalogWritePermission : has_permission(request)
+
+alt permission denied
+  ProductViewSet --> Client : 403 Forbidden
+else permitted
+  ProductViewSet -> ProductViewSet : validate VariantSerializer
+  ProductViewSet -> ProductApplicationService : create_variant(product_id, CreateVariantCommand)
+  ProductApplicationService -> DjangoProductRepository : create_variant(product_id, entity)
+  DjangoProductRepository -> ProductDB : INSERT INTO catalog_variants
+  ProductDB --> DjangoProductRepository : VariantModel
+  DjangoProductRepository --> ProductApplicationService : Variant entity
+  ProductApplicationService --> ProductViewSet : Variant
+  ProductViewSet --> Client : 201 Variant data
+end
+
+@enduml

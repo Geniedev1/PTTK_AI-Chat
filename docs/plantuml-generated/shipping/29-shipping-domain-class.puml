@@ -1,0 +1,110 @@
+@startuml 29-shipping-domain-class
+title Shipping Domain - Design Class Diagram
+
+class Shipment {
+  + id : int
+  + order_id : int
+  + customer_id : int
+  + session_key : str
+  + recipient_name : str
+  + phone : str
+  + address : str
+  + city : str
+  + country : str
+  + carrier : str
+  + tracking_number : str
+  + shipping_fee : str
+  + status : str
+  + failure_reason : str
+  + shipped_at : str
+  + delivered_at : str
+  + cancelled_at : str
+  + created_at : str
+  + updated_at : str
+  + can_transition_to(new_status) : bool
+}
+
+class ShipmentAddress {
+  + id : int
+  + recipient_name : str
+  + phone : str
+  + address : str
+  + city : str
+  + country : str
+  + created_at : str
+}
+
+class ShipmentTrackingEvent {
+  + id : int
+  + status : str
+  + location : str
+  + description : str
+  + event_time : str
+  + metadata : str
+}
+
+class ShippingRate {
+  + id : int
+  + carrier : str
+  + city : str
+  + country : str
+  + base_fee : str
+  + estimated_days_min : int
+  + estimated_days_max : int
+  + is_active : bool
+}
+
+class OrderServiceClient {
+  + fetch_order(order_id) : dict
+  + update_order_status(order_id, status) : bool
+}
+
+class InteractionServiceClient {
+  + emit_event(event_type, data) : bool
+}
+
+class ShipmentSerializer {
+  + id : int
+  + order_id : int
+  + status : str
+  + tracking_number : str
+}
+
+class ShipmentCreateSerializer {
+  + order_id : int
+  + customer_id : int
+  + session_key : str
+  + recipient_name : str
+  + phone : str
+  + address : str
+}
+
+class ShipmentFailSerializer {
+  + failure_reason : str
+}
+
+class ShipmentViewSet {
+  + list(request) : Response
+  + retrieve(request, pk) : Response
+  + create(request) : Response
+  + mark_ready(request, pk) : Response
+  + ship(request, pk) : Response
+  + deliver(request, pk) : Response
+  + cancel(request, pk) : Response
+  + fail(request, pk) : Response
+}
+
+Shipment "1" -- "1" ShipmentAddress
+Shipment "1" -- "0..*" ShipmentTrackingEvent
+
+ShipmentViewSet ..> Shipment
+ShipmentViewSet ..> ShipmentAddress
+ShipmentViewSet ..> ShipmentTrackingEvent
+ShipmentViewSet ..> ShippingRate
+ShipmentViewSet ..> OrderServiceClient
+ShipmentViewSet ..> InteractionServiceClient
+ShipmentViewSet ..> ShipmentSerializer
+ShipmentViewSet ..> ShipmentCreateSerializer
+ShipmentViewSet ..> ShipmentFailSerializer
+
+@enduml

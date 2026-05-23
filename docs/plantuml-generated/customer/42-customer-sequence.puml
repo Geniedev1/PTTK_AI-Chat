@@ -1,0 +1,73 @@
+@startuml 42-customer-sequence
+title Customer Domain - Sequence Diagram
+
+participant Client
+participant CustomerViewSet
+participant CustomerRegisterSerializer
+participant CustomerLoginSerializer
+database UserDB
+database CustomerDB
+database TokenDB
+
+== Register Customer ==
+
+Client -> CustomerViewSet : POST /api/customers/register/\n{username, password, email, phone, address}
+CustomerViewSet -> CustomerRegisterSerializer : validate(data)
+CustomerRegisterSerializer -> UserDB : check username exists
+UserDB --> CustomerRegisterSerializer : not found
+CustomerRegisterSerializer --> CustomerViewSet : validated_data
+CustomerViewSet -> UserDB : User.create_user(username, email, password)
+UserDB --> CustomerViewSet : user
+CustomerViewSet -> CustomerDB : Customer.objects.create(user, phone, address)
+CustomerDB --> CustomerViewSet : customer
+CustomerViewSet --> Client : 201 {message: registered}
+
+== Login Customer ==
+
+Client -> CustomerViewSet : POST /api/customers/login/\n{username, password}
+CustomerViewSet -> CustomerLoginSerializer : validate(data)
+CustomerLoginSerializer --> CustomerViewSet : validated_data
+CustomerViewSet -> UserDB : authenticate(username, password)
+UserDB --> CustomerViewSet : user or None
+
+alt authentication failed
+  CustomerViewSet --> Client : 401 Invalid credentials
+else user inactive
+  CustomerViewSet --> Client : 403 Account disabled
+else success
+  CustomerViewSet -> CustomerDB : Customer.objects.get(user)
+  CustomerDB --> CustomerViewSet : customer
+  CustomerViewSet -> TokenDB : Token.get_or_create(user)
+  TokenDB --> CustomerViewSet : token
+  CustomerViewSet --> Client : 200 {token, customer}
+end
+
+== Get Profile ==
+
+Client -> CustomerViewSet : GET /api/customers/profile/\nAuthorization: Token <key>
+CustomerViewSet -> CustomerViewSet : check IsAuthenticated
+
+alt not authenticated
+  CustomerViewSet --> Client : 401 Unauthorized
+else authenticated
+  CustomerViewSet -> CustomerDB : Customer.objects.get(user=request.user)
+  CustomerDB --> CustomerViewSet : customer
+  CustomerViewSet --> Client : 200 Customer profile
+end
+
+== Update Profile ==
+
+Client -> CustomerViewSet : PUT /api/customers/profile/\n{phone, address, city, country}
+CustomerViewSet -> CustomerViewSet : check IsAuthenticated
+
+alt not authenticated
+  CustomerViewSet --> Client : 401 Unauthorized
+else authenticated
+  CustomerViewSet -> CustomerDB : Customer.objects.get(user)
+  CustomerDB --> CustomerViewSet : customer
+  CustomerViewSet -> CustomerDB : customer.save(phone, address, city, country)
+  CustomerDB --> CustomerViewSet : updated customer
+  CustomerViewSet --> Client : 200 Updated profile
+end
+
+@enduml

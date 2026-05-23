@@ -1,0 +1,91 @@
+@startuml 26-cart-domain-class
+title Cart Domain - Design Class Diagram
+
+class CartSession {
+  + id : int
+  + session_key : str
+  + customer_id : int
+  + created_at : str
+  + updated_at : str
+}
+
+class Cart {
+  + id : int
+  + session_key : str
+  + customer_id : int
+  + product_id : int
+  + quantity : int
+  + price_snapshot : str
+  + created_at : str
+  + updated_at : str
+}
+
+class CartSnapshot {
+  + id : int
+  + session_key : str
+  + item_count : int
+  + total_quantity : int
+  + subtotal_amount : str
+  + snapshot : str
+  + created_at : str
+}
+
+class CartEvent {
+  + id : int
+  + session_key : str
+  + event_type : str
+  + product_id : int
+  + metadata : str
+  + created_at : str
+}
+
+class ProductServiceClient {
+  + fetch_product_price(product_id) : str
+}
+
+class CartSerializer {
+  + id : int
+  + session_key : str
+  + product_id : int
+  + quantity : int
+  + price_snapshot : str
+}
+
+class CartAddSerializer {
+  + product_id : int
+  + quantity : int
+  + validate(attrs) : dict
+}
+
+class CartUpdateSerializer {
+  + product_id : int
+  + quantity : int
+}
+
+class CartRemoveSerializer {
+  + product_id : int
+}
+
+class CartViewSet {
+  + current(request) : Response
+  + add_product(request) : Response
+  + remove_product(request) : Response
+  + update_quantity(request) : Response
+  + clear_cart(request) : Response
+}
+
+CartSession "1" -- "0..*" Cart
+CartSession "1" -- "0..*" CartSnapshot
+CartSession "1" -- "0..*" CartEvent
+
+CartViewSet ..> Cart
+CartViewSet ..> CartSession
+CartViewSet ..> CartSnapshot
+CartViewSet ..> CartEvent
+CartViewSet ..> ProductServiceClient
+CartViewSet ..> CartSerializer
+CartViewSet ..> CartAddSerializer
+CartViewSet ..> CartUpdateSerializer
+CartViewSet ..> CartRemoveSerializer
+
+@enduml

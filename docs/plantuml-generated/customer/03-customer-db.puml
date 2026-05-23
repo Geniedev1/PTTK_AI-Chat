@@ -1,0 +1,89 @@
+@startuml 03-customer-db
+
+skinparam linetype ortho
+skinparam entity {
+  FontStyle bold
+}
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam defaultFontSize 11
+
+entity "auth_user\n(Django built-in)" as auth_user {
+  * id : INTEGER <<PK>>
+  --
+  username : VARCHAR(150) <<UNIQUE>>
+  email : VARCHAR(254)
+  password : VARCHAR(128)
+  is_active : BOOLEAN
+  date_joined : DATETIME
+}
+
+entity "authtoken_token\n(DRF built-in)" as authtoken_token {
+  * key : VARCHAR(40) <<PK>>
+  --
+  # user_id : INTEGER <<FK → auth_user.id>>
+  created : DATETIME
+}
+
+entity "customer_customer" as Customer {
+  * id : INTEGER <<PK, AUTO>>
+  --
+  # user_id : INTEGER <<FK → auth_user.id>>
+  phone : VARCHAR(20)
+  address : TEXT
+  city : VARCHAR(100)
+  country : VARCHAR(100)
+  created_at : DATETIME
+  updated_at : DATETIME
+}
+
+entity "customer_customerprofile" as CustomerProfile {
+  * id : INTEGER <<PK, AUTO>>
+  --
+  # customer_id : INTEGER <<FK → customer_customer.id>>
+  full_name : VARCHAR(255)
+  date_of_birth : DATE <<nullable>>
+  gender : VARCHAR(32)
+  marketing_opt_in : BOOLEAN [default=False]
+  updated_at : DATETIME
+}
+
+entity "customer_customeraddress" as CustomerAddress {
+  * id : INTEGER <<PK, AUTO>>
+  --
+  # customer_id : INTEGER <<FK → customer_customer.id>>
+  recipient_name : VARCHAR(255)
+  phone : VARCHAR(20)
+  address : TEXT
+  city : VARCHAR(100)
+  country : VARCHAR(100)
+  is_default : BOOLEAN [default=False]
+  created_at : DATETIME
+  updated_at : DATETIME
+}
+
+entity "customer_customeractivitylog" as CustomerActivityLog {
+  * id : INTEGER <<PK, AUTO>>
+  --
+  # customer_id : INTEGER <<FK → customer_customer.id>>
+  event_type : VARCHAR(64)
+  metadata : JSON
+  created_at : DATETIME
+  --
+  INDEX (customer_id, event_type)
+  INDEX (created_at)
+}
+
+auth_user ||--|| Customer : "user_id (OneToOne)"
+auth_user ||--|| authtoken_token : "user_id (OneToOne)"
+Customer ||--o| CustomerProfile : "customer_id (OneToOne)\nrelated_name='profile_detail'"
+Customer ||--o{ CustomerAddress : "customer_id (ForeignKey)\nrelated_name='addresses'"
+Customer ||--o{ CustomerActivityLog : "customer_id (ForeignKey)\nrelated_name='activity_logs'"
+
+note top of CustomerAddress
+  Ordering: [-is_default, -created_at]
+  Supports multiple delivery addresses.
+  is_default = True: default address.
+end note
+
+@enduml

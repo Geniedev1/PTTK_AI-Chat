@@ -1,0 +1,263 @@
+@startuml 25-product-domain-class
+title Product Domain - Design Class Diagram (DDD)
+
+' ---- Domain Layer ----
+
+class Product {
+  + id : int
+  + name : str
+  + slug : str
+  + short_description : str
+  + description : str
+  + category_id : int
+  + brand_id : int
+  + product_type_id : int
+  + base_price : Decimal
+  + stock : int
+  + is_active : bool
+  + tags : list
+  + image_urls : list
+  --
+  + has_stock() : bool
+  + status() : str
+}
+
+note top of Product : Domain Entity
+
+class Variant {
+  + id : int
+  + sku : str
+  + name : str
+  + attributes : dict
+  + stock : int
+  + price_override : Decimal
+  + is_default : bool
+  --
+  + effective_price(base_price) : Decimal
+}
+
+class Category {
+  + id : int
+  + name : str
+  + slug : str
+  + parent_id : int
+}
+
+class Brand {
+  + id : int
+  + name : str
+  + slug : str
+}
+
+class ProductType {
+  + id : int
+  + code : str
+  + name : str
+  + description : str
+}
+
+class IProductRepository {
+  + get_by_id(product_id) : Product
+  + list(filters) : list
+  + create(entity) : Product
+  + update(product_id, entity) : Product
+  + delete(product_id) : bool
+  + create_variant(product_id, entity) : Variant
+}
+
+note top of IProductRepository : interface
+
+' ---- Application Layer ----
+
+class CreateProductCommand {
+  + name : str
+  + slug : str
+  + base_price : Decimal
+  + stock : int
+  + category_id : int
+  + brand_id : int
+  + is_active : bool
+  + tags : list
+  + attributes : dict
+}
+
+class UpdateProductCommand {
+  + name : str
+  + slug : str
+  + base_price : Decimal
+  + stock : int
+  + is_active : bool
+}
+
+class CreateVariantCommand {
+  + sku : str
+  + name : str
+  + attributes : dict
+  + stock : int
+  + price_override : Decimal
+  + is_default : bool
+}
+
+class FilterProductsQuery {
+  + category_id : int
+  + brand_id : int
+  + in_stock : bool
+  + search : str
+  + min_price : Decimal
+  + max_price : Decimal
+  + tag : str
+}
+
+class ProductApplicationService {
+  - repository : IProductRepository
+  --
+  + create_product(command) : Product
+  + update_product(id, command) : Product
+  + get_product(product_id) : Product
+  + list_products(include_inactive) : list
+  + filter_products(query) : list
+  + delete_product(product_id) : bool
+  + create_variant(product_id, command) : Variant
+}
+
+note top of ProductApplicationService : Application Service
+
+' ---- Infrastructure Layer ----
+
+class ProductModel {
+  + id : int PK
+  + name : CharField
+  + slug : SlugField unique
+  + base_price : DecimalField
+  + stock : IntegerField
+  + attributes : JSONField
+  + tags : JSONField
+  + is_active : bool
+  + category : FK to CategoryModel
+  + brand : FK to BrandModel
+  + product_type : FK to ProductTypeModel
+}
+
+note top of ProductModel : Django ORM Model
+
+class VariantModel {
+  + id : int PK
+  + sku : CharField unique
+  + name : CharField
+  + attributes : JSONField
+  + stock : IntegerField
+  + price_override : DecimalField
+  + is_default : bool
+  + product : FK to ProductModel CASCADE
+}
+
+class CategoryModel {
+  + id : int PK
+  + name : CharField
+  + slug : SlugField unique
+  + parent : FK to self
+}
+
+class BrandModel {
+  + id : int PK
+  + name : CharField
+  + slug : SlugField unique
+}
+
+class ProductTypeModel {
+  + id : int PK
+  + code : CharField unique
+  + name : CharField
+  + description : TextField
+}
+
+class DjangoProductRepository {
+  + get_by_id(product_id) : Product
+  + list(filters) : list
+  + create(entity) : Product
+  + update(product_id, entity) : Product
+  + delete(product_id) : bool
+  + create_variant(product_id, entity) : Variant
+  - _to_entity(model) : Product
+  - _apply_filters(qs, filters) : QuerySet
+}
+
+' ---- Presentation Layer ----
+
+class CatalogWritePermission {
+  + has_permission(request, view) : bool
+}
+
+class ProductReadSerializer {
+  + id : int
+  + name : str
+  + slug : str
+  + base_price : str
+  + stock : int
+  + has_stock : bool
+  + status : str
+  + is_active : bool
+  + tags : list
+  + variants : list
+}
+
+class ProductWriteSerializer {
+  + name : CharField
+  + slug : SlugField
+  + base_price : DecimalField
+  + stock : IntegerField
+  + category_id : IntegerField
+  + is_active : bool
+  + tags : ListField
+  --
+  + validate(attrs) : dict
+}
+
+class VariantSerializer {
+  + sku : CharField
+  + name : CharField
+  + attributes : JSONField
+  + stock : IntegerField
+  + price_override : DecimalField
+  + is_default : bool
+}
+
+class ProductViewSet {
+  + list(request) : Response
+  + retrieve(request, pk) : Response
+  + create(request) : Response
+  + update(request, pk) : Response
+  + destroy(request, pk) : Response
+  + search(request) : Response
+  + in_stock(request) : Response
+  + variants(request, pk) : Response
+}
+
+note top of ProductViewSet : Presentation Controller
+
+' ---- Relationships ----
+
+Product "1" *-- "0..*" Variant
+
+DjangoProductRepository ..> IProductRepository : implements
+DjangoProductRepository ..> ProductModel : uses
+DjangoProductRepository ..> VariantModel : uses
+
+ProductModel "1" o-- "0..*" VariantModel
+CategoryModel "1" o-- "0..*" ProductModel
+BrandModel "1" o-- "0..*" ProductModel
+ProductTypeModel "1" o-- "0..*" ProductModel
+
+ProductApplicationService ..> IProductRepository : depends on
+ProductApplicationService ..> CreateProductCommand : uses
+ProductApplicationService ..> UpdateProductCommand : uses
+ProductApplicationService ..> CreateVariantCommand : uses
+ProductApplicationService ..> FilterProductsQuery : uses
+
+ProductViewSet ..> ProductApplicationService : instantiates
+ProductViewSet ..> CatalogWritePermission : checks
+ProductViewSet ..> ProductReadSerializer : output
+ProductViewSet ..> ProductWriteSerializer : input
+ProductViewSet ..> VariantSerializer : variant IO
+
+@enduml

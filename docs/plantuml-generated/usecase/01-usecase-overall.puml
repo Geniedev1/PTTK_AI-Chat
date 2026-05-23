@@ -1,0 +1,192 @@
+@startuml 01-usecase-overall
+
+actor "Customer" as Customer
+actor "Staff / Admin" as Staff
+actor "API Gateway" as Gateway
+actor "AI Service" as AIService
+
+rectangle "E-Commerce + AI System (PTTK_AI-Chat)" {
+
+  package "Authentication (Auth)" as PKG_AUTH {
+    usecase "Register account\n[POST /api/customers/register/]" as UC_CUST_REGISTER
+    usecase "Customer Login\n[POST /api/customers/login/]" as UC_CUST_LOGIN
+    usecase "View profile\n[GET /api/customers/profile/]" as UC_CUST_PROFILE
+    usecase "Update profile\n[PUT /api/customers/update_profile/]" as UC_CUST_UPDATE
+    usecase "Staff/Admin Login\n[POST /api/staff/login/]" as UC_STAFF_LOGIN
+    usecase "Register Staff/Admin\n[POST /api/staff/register/]\n<<X-Internal-Admin-Key>>" as UC_STAFF_REGISTER
+    usecase "View Staff profile\n[GET /api/staff/me/]" as UC_STAFF_ME
+  }
+
+  package "Product Catalog" as PKG_PRODUCT {
+    usecase "View products list\n[GET /api/products/]" as UC_PROD_LIST
+    usecase "Search / filter products\n[GET /api/products/search/]\n[GET /api/products/?search=...]" as UC_PROD_SEARCH
+    usecase "View product details\n[GET /api/products/{id}/]" as UC_PROD_DETAIL
+    usecase "View in-stock products\n[GET /api/products/in_stock/]" as UC_PROD_INSTOCK
+    usecase "View categories list\n[GET /api/products/categories/]" as UC_CAT_LIST
+    usecase "Manage products\n(Create/Edit/Delete)\n[POST/PUT/DELETE /api/products/]" as UC_PROD_MANAGE
+    usecase "Manage product variants\n[POST /api/products/{id}/variants/]" as UC_VARIANT_MANAGE
+  }
+
+  package "Cart" as PKG_CART {
+    usecase "View current cart\n[GET /api/cart/current]\n<<X-Cart-Session-Key>>" as UC_CART_VIEW
+    usecase "Add product to cart\n[POST /api/cart/add_product]" as UC_CART_ADD
+    usecase "Remove product from cart\n[POST /api/cart/remove_product]" as UC_CART_REMOVE
+    usecase "Update product quantity\n[POST /api/cart/update_quantity]" as UC_CART_UPDATE
+    usecase "Clear cart\n[POST /api/cart/clear_cart]" as UC_CART_CLEAR
+  }
+
+  package "Order" as PKG_ORDER {
+    usecase "Create order from cart\n[POST /api/orders]\n<<X-Cart-Session-Key>>" as UC_ORDER_CREATE
+    usecase "View order history\n[GET /api/orders]" as UC_ORDER_LIST
+    usecase "View order details\n[GET /api/orders/{id}]" as UC_ORDER_DETAIL
+    usecase "Update order status\n[POST /api/orders/{id}/update_status]\n<<X-Internal-Admin-Key>>" as UC_ORDER_STATUS
+  }
+
+  package "Payment" as PKG_PAYMENT {
+    usecase "Create payment\n[POST /api/payments]" as UC_PAY_CREATE
+    usecase "Confirm payment\n[POST /api/payments/{id}/confirm]" as UC_PAY_CONFIRM
+    usecase "Cancel payment\n[POST /api/payments/{id}/cancel]" as UC_PAY_CANCEL
+    usecase "Refund payment\n[POST /api/payments/{id}/refund]" as UC_PAY_REFUND
+    usecase "Report payment failure\n[POST /api/payments/{id}/fail]" as UC_PAY_FAIL
+  }
+
+  package "Shipping" as PKG_SHIPPING {
+    usecase "Create shipment\n[POST /api/shipping/shipments]" as UC_SHIP_CREATE
+    usecase "Update shipment status\n(mark_ready / ship / deliver\n / cancel / fail)" as UC_SHIP_STATUS
+    usecase "View shipment info\n[GET /api/shipping/shipments/{id}]" as UC_SHIP_VIEW
+  }
+
+  package "Interaction & Knowledge Graph" as PKG_INTERACT {
+    usecase "Record interaction event\n[POST /api/interactions/events]\n(product_viewed, cart_item_added,\norder_paid, search_performed,...)" as UC_EVENT_CREATE
+    usecase "Query interaction events\n[GET /api/interactions/events]" as UC_EVENT_LIST
+    usecase "View data quality metrics\n[GET /api/interactions/events/data_quality]" as UC_EVENT_QUALITY
+    usecase "View top search queries\n[GET /api/interactions/events/top_queries]" as UC_TOP_QUERIES
+    usecase "View product funnel analysis\n[GET /api/interactions/events/product_gaps]" as UC_PROD_GAPS
+    usecase "View abandoned carts\n[GET /api/interactions/events/abandoned_carts]" as UC_ABANDONED
+    usecase "View signal weights\n[GET /api/interactions/events/signal_weights]" as UC_SIGNAL_WEIGHTS
+    usecase "View Knowledge Graph status\n[GET /api/interactions/graph/status]" as UC_GRAPH_STATUS
+    usecase "Rebuild Knowledge Graph\n[POST /api/interactions/graph/rebuild]\n<<X-Internal-Admin-Key>>" as UC_GRAPH_REBUILD
+    usecase "Query user interests from graph\n[GET /api/interactions/graph/user_interest]" as UC_GRAPH_USER
+    usecase "Query product neighbors\n[GET /api/interactions/graph/product_neighbors]" as UC_GRAPH_NEIGHBORS
+    usecase "Query paths\n[GET /api/interactions/graph/query_paths]" as UC_GRAPH_PATHS
+    usecase "Query similar users\n[GET /api/interactions/graph/similar_users]" as UC_GRAPH_USERS
+  }
+
+  package "AI Service" as PKG_AI {
+    usecase "Recommend products for home page\n[GET /api/ai/recommend/home]" as UC_AI_HOME
+    usecase "Recommend products for product detail page\n[GET /api/ai/recommend/product-detail]" as UC_AI_PDTL
+    usecase "Recommend products for cart page\n[GET /api/ai/recommend/cart]" as UC_AI_CART
+    usecase "Snapshot user profile\n[GET /api/ai/recommend/profile/snapshot]\n[GET /api/ai/profile/snapshot]" as UC_AI_PROFILE
+    usecase "View AI models status\n[GET /api/ai/models/status]" as UC_AI_MODEL_STATUS
+    usecase "Chat with AI (RAG Chatbot)\n[POST /api/ai/chat]" as UC_AI_CHAT
+    usecase "Retrieve RAG context\n[POST /api/ai/chat/retrieve]" as UC_AI_RETRIEVE
+  }
+
+}
+
+Customer --> UC_CUST_REGISTER
+Customer --> UC_CUST_LOGIN
+Customer --> UC_CUST_PROFILE
+Customer --> UC_CUST_UPDATE
+Customer --> UC_PROD_LIST
+Customer --> UC_PROD_SEARCH
+Customer --> UC_PROD_DETAIL
+Customer --> UC_PROD_INSTOCK
+Customer --> UC_CAT_LIST
+Customer --> UC_CART_VIEW
+Customer --> UC_CART_ADD
+Customer --> UC_CART_REMOVE
+Customer --> UC_CART_UPDATE
+Customer --> UC_CART_CLEAR
+Customer --> UC_ORDER_CREATE
+Customer --> UC_ORDER_LIST
+Customer --> UC_ORDER_DETAIL
+Customer --> UC_PAY_CREATE
+Customer --> UC_PAY_CONFIRM
+Customer --> UC_PAY_CANCEL
+Customer --> UC_SHIP_VIEW
+Customer --> UC_AI_HOME
+Customer --> UC_AI_PDTL
+Customer --> UC_AI_CART
+Customer --> UC_AI_CHAT
+
+Staff --> UC_STAFF_LOGIN
+Staff --> UC_STAFF_REGISTER
+Staff --> UC_STAFF_ME
+Staff --> UC_PROD_MANAGE
+Staff --> UC_VARIANT_MANAGE
+Staff --> UC_ORDER_STATUS
+Staff --> UC_PAY_REFUND
+Staff --> UC_PAY_FAIL
+Staff --> UC_SHIP_CREATE
+Staff --> UC_SHIP_STATUS
+Staff --> UC_EVENT_LIST
+Staff --> UC_EVENT_QUALITY
+Staff --> UC_TOP_QUERIES
+Staff --> UC_PROD_GAPS
+Staff --> UC_ABANDONED
+Staff --> UC_SIGNAL_WEIGHTS
+Staff --> UC_GRAPH_STATUS
+Staff --> UC_GRAPH_REBUILD
+Staff --> UC_GRAPH_USER
+Staff --> UC_GRAPH_NEIGHBORS
+Staff --> UC_GRAPH_PATHS
+Staff --> UC_GRAPH_USERS
+Staff --> UC_AI_MODEL_STATUS
+Staff --> UC_AI_PROFILE
+Staff --> UC_AI_RETRIEVE
+
+Gateway --> UC_CUST_REGISTER : routes to\ncustomer-service:8002
+Gateway --> UC_STAFF_LOGIN : routes to\nstaff-service:8001
+Gateway --> UC_PROD_LIST : routes to\nproduct-service:8004
+Gateway --> UC_CART_VIEW : routes to\ncart-service:8003
+Gateway --> UC_ORDER_CREATE : routes to\norder-service:8005
+Gateway --> UC_PAY_CREATE : routes to\npayment-service:8008
+Gateway --> UC_SHIP_CREATE : routes to\nshipping-service:8009
+Gateway --> UC_EVENT_CREATE : routes to\ninteraction-service:8006
+Gateway --> UC_AI_HOME : routes to\nai-service:8007
+
+AIService --> UC_EVENT_CREATE : records AI\ninteractions
+AIService --> UC_GRAPH_USER : gets user\ninterests from graph
+AIService --> UC_GRAPH_NEIGHBORS : gets neighboring\nproducts
+AIService --> UC_PROD_DETAIL : gets product\ninfo
+
+UC_CART_ADD ..> UC_PROD_DETAIL : <<include>>\nvalidate product
+UC_CART_UPDATE ..> UC_PROD_DETAIL : <<include>>\nvalidate product
+UC_ORDER_CREATE ..> UC_CART_VIEW : <<include>>\nread cart
+UC_ORDER_CREATE ..> UC_CART_CLEAR : <<extend>>\nclear_cart = true
+UC_PAY_CONFIRM ..> UC_ORDER_STATUS : <<include>>\nupdate order → PAID
+UC_SHIP_CREATE ..> UC_ORDER_DETAIL : <<include>>\nvalidate order PAID
+UC_SHIP_STATUS ..> UC_ORDER_STATUS : <<include>>\nupdate order → COMPLETED
+UC_EVENT_CREATE ..> UC_GRAPH_STATUS : <<extend>>\nGRAPH_SYNC_ON_WRITE
+UC_AI_HOME ..> UC_GRAPH_USER : <<include>>\nget profile from graph
+UC_AI_PDTL ..> UC_GRAPH_NEIGHBORS : <<include>>\nget related products
+UC_AI_CART ..> UC_CART_VIEW : <<include>>\nread current cart
+
+note top of PKG_AUTH
+  Staff registration requires header:
+  X-Internal-Admin-Key
+end note
+
+note bottom of PKG_AI
+  AI Service uses:
+  - RecommendationService (deep model + signal scoring)
+  - ChatbotService (RAG + OpenAI LLM)
+  - KnowledgeGraph (Neo4j) via interaction-service
+end note
+
+note right of UC_ORDER_STATUS
+  Valid states:
+  PENDING → CONFIRMED / PAID / CANCELLED
+  CONFIRMED → PAID / CANCELLED
+  PAID → COMPLETED
+end note
+
+note right of UC_PAY_CONFIRM
+  Payment status:
+  PENDING → PROCESSING → PAID
+  PAID → REFUNDED
+  * → FAILED / CANCELLED
+end note
+
+@enduml

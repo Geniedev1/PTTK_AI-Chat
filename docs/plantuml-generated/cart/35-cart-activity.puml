@@ -1,0 +1,81 @@
+@startuml 35-cart-activity
+title Cart Domain — Activity Diagram
+
+start
+
+:Receive request from Client;
+:Read X-Cart-Session-Key header;
+
+if (session_key in header?) then (no)
+  :Create new CartSession (uuid4());
+  :Attach session_key to X-Cart-Session-Key response header;
+else (yes)
+  :CartSession.objects.get_or_create(session_key);
+endif
+
+if (Request type?) then (GET current)
+  :Get all Cart items by session_key;
+  :Calculate subtotal = sum(quantity * price_snapshot);
+  :Calculate item_count, total_quantity;
+  :Save CartSnapshot (current snapshot);
+  :Create CartEvent {event_type: cart_viewed};
+  :Return 200 {session_key, items, item_count,
+    total_quantity, subtotal_amount};
+
+elseif (POST add) then (add product)
+  :Validate CartAddSerializer {product_id, quantity};
+  if (Valid?) then (no)
+    :Return 400;
+    stop
+  endif
+  :Call product-service GET /api/products/{id}/;
+  if (Product exists and is_active?) then (no)
+    :price_snapshot = null;
+  else (yes)
+    :price_snapshot = base_price;
+  endif
+  :Cart.objects.get_or_create(session_key, product_id);
+  if (Cart item already exists?) then (yes)
+    :cart.quantity += new_quantity;
+    :cart.save();
+  else (no)
+    :Create new Cart (quantity, price_snapshot);
+  endif
+  :Create CartEvent {event_type: cart_item_added};
+  :Return 200 Cart item data;
+
+elseif (POST remove) then (remove product)
+  :Validate CartRemoveSerializer {product_id};
+  if (Valid?) then (no)
+    :Return 400;
+    stop
+  endif
+  :Cart.objects.filter(session_key, product_id).delete();
+  :Create CartEvent {event_type: cart_item_removed};
+  :Return 200 {message: removed};
+
+elseif (POST update) then (update quantity)
+  :Validate CartUpdateSerializer {product_id, quantity};
+  if (Valid?) then (no)
+    :Return 400;
+    stop
+  endif
+  :Cart.objects.get(session_key, product_id);
+  if (Exists?) then (no)
+    :Return 404;
+    stop
+  endif
+  :cart.quantity = new_quantity;
+  :cart.save();
+  :Create CartEvent {event_type: cart_item_quantity_updated};
+  :Return 200 Updated cart item;
+
+else (POST clear)
+  :Cart.objects.filter(session_key).delete();
+  :Create CartEvent {event_type: cart_cleared};
+  :Return 200 {message: cleared};
+endif
+
+stop
+
+@enduml

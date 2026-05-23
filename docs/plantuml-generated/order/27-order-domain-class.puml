@@ -1,0 +1,116 @@
+@startuml 27-order-domain-class
+title Order Domain - Design Class Diagram
+
+class Order {
+  + id : int PK
+  + customer_id : IntegerField nullable
+  + session_key : CharField indexed
+  + status : CharField choices PENDING CONFIRMED PAID CANCELLED COMPLETED
+  + total_amount : DecimalField
+  + confirmed_at : DateTimeField nullable
+  + paid_at : DateTimeField nullable
+  + completed_at : DateTimeField nullable
+  + cancelled_at : DateTimeField nullable
+  + created_at : DateTimeField
+  + updated_at : DateTimeField
+  --
+  + can_transition_to(new_status) : bool
+  + purchase_succeeded() : bool
+  + purchase_event() : str
+}
+
+class OrderItem {
+  + id : int PK
+  + product_id : IntegerField
+  + product_name_snapshot : CharField
+  + price_snapshot : DecimalField
+  + quantity : IntegerField
+  + created_at : DateTimeField
+  --
+  + order : FK to Order CASCADE
+}
+
+class OrderStatusHistory {
+  + id : int PK
+  + old_status : CharField
+  + new_status : CharField
+  + changed_by : CharField
+  + metadata : JSONField
+  + created_at : DateTimeField
+  --
+  + order : FK to Order CASCADE
+}
+
+class OrderNote {
+  + id : int PK
+  + note : TextField
+  + created_by : CharField
+  + is_internal : bool
+  + created_at : DateTimeField
+  --
+  + order : FK to Order CASCADE
+}
+
+class CartServiceClient {
+  + fetch_cart(session_key) : dict
+  + clear_cart(session_key) : void
+}
+
+class ProductServiceClient {
+  + get_product(product_id) : dict
+}
+
+class InteractionServiceClient {
+  + emit_event(event_type, data) : bool
+}
+
+class OrderItemSerializer {
+  + fields : id, product_id, product_name_snapshot,
+  + price_snapshot, quantity, created_at
+}
+
+class OrderSerializer {
+  + fields : id, customer_id, session_key, status,
+  + total_amount, purchase_succeeded, purchase_event,
+  + items, status_history, created_at, updated_at
+  + items : OrderItemSerializer nested many
+  + status_history : OrderStatusHistorySerializer nested many
+}
+
+class OrderCreateSerializer {
+  + customer_id : IntegerField optional
+  + clear_cart : BooleanField default True
+}
+
+class OrderStatusUpdateSerializer {
+  + status : ChoiceField
+  --
+  + validate_status(value) : str
+}
+
+class OrderViewSet {
+  + list(request) : Response
+  + retrieve(request, pk) : Response
+  + create(request) : Response
+  + update_status(request, pk) : Response
+  - _get_scoped_queryset(request) : QuerySet
+  - _transition_order(order, new_status) : void
+  - _emit_event(event_type, order) : void
+}
+
+Order "1" *-- "1..*" OrderItem
+Order "1" *-- "0..*" OrderStatusHistory
+Order "1" *-- "0..*" OrderNote
+
+OrderViewSet ..> Order
+OrderViewSet ..> OrderItem
+OrderViewSet ..> OrderStatusHistory
+OrderViewSet ..> CartServiceClient
+OrderViewSet ..> ProductServiceClient
+OrderViewSet ..> InteractionServiceClient
+OrderViewSet ..> OrderSerializer
+OrderViewSet ..> OrderCreateSerializer
+OrderViewSet ..> OrderStatusUpdateSerializer
+OrderSerializer ..> OrderItemSerializer
+
+@enduml

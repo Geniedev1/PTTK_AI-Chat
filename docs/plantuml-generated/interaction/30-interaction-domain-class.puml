@@ -1,0 +1,125 @@
+@startuml 30-interaction-domain-class
+title Interaction Domain - Design Class Diagram
+
+class InteractionEvent {
+  + id : int
+  + event_id : str
+  + event_type : str
+  + user_id : int
+  + session_id : str
+  + product_id : int
+  + query_text : str
+  + source : str
+  + signal_weight : int
+  + timestamp : str
+  + metadata : str
+  + created_at : str
+  + save() : void
+}
+
+class BehaviorProfile {
+  + id : int
+  + user_id : int
+  + session_id : str
+  + profile_json : str
+  + event_count : int
+  + last_event_at : str
+  + updated_at : str
+  + created_at : str
+}
+
+class SearchQueryLog {
+  + id : int
+  + user_id : int
+  + session_id : str
+  + query_text : str
+  + result_count : int
+  + product_ids : str
+  + created_at : str
+}
+
+class EventAggregate {
+  + id : int
+  + metric_name : str
+  + metric_date : str
+  + dimension : str
+  + metric_value : int
+  + metadata : str
+  + updated_at : str
+}
+
+class KnowledgeGraphStore {
+  + enabled : bool
+  + status() : dict
+  + clear_graph() : void
+  + sync_product_catalog(products, categories) : dict
+  + sync_interaction_event(event) : bool
+  + rebuild_graph(products, categories, interactions) : dict
+  + refresh_similarity_edges() : dict
+  + user_interest(user_id, session_id, limit) : list
+  + product_neighbors(product_id, limit) : list
+  + query_paths(product_id, query_text, limit) : list
+  + similar_users(user_id, session_id, limit) : list
+}
+
+class ProductCatalogSyncClient {
+  + fetch_products() : list
+  + fetch_categories() : list
+}
+
+class InteractionEventCreateSerializer {
+  + event_type : str
+  + user_id : int
+  + session_id : str
+  + product_id : int
+  + query_text : str
+  + source : str
+  + metadata : str
+  + validate(attrs) : dict
+}
+
+class InteractionEventSerializer {
+  + id : int
+  + event_id : str
+  + event_type : str
+  + user_id : int
+  + signal_weight : int
+  + timestamp : str
+}
+
+class InteractionEventViewSet {
+  + create(request) : Response
+  + list(request) : Response
+  + data_quality(request) : Response
+  + top_queries(request) : Response
+  + product_gaps(request) : Response
+  + abandoned_carts(request) : Response
+  + signal_weights(request) : Response
+}
+
+class KnowledgeGraphViewSet {
+  + status(request) : Response
+  + rebuild(request) : Response
+  + user_interest(request) : Response
+  + product_neighbors(request) : Response
+  + query_paths(request) : Response
+  + similar_users(request) : Response
+}
+
+InteractionEvent ..> BehaviorProfile
+InteractionEvent ..> SearchQueryLog
+InteractionEvent ..> EventAggregate
+InteractionEvent ..> KnowledgeGraphStore
+
+InteractionEventViewSet ..> InteractionEvent
+InteractionEventViewSet ..> BehaviorProfile
+InteractionEventViewSet ..> SearchQueryLog
+InteractionEventViewSet ..> EventAggregate
+InteractionEventViewSet ..> KnowledgeGraphStore
+InteractionEventViewSet ..> InteractionEventSerializer
+InteractionEventViewSet ..> InteractionEventCreateSerializer
+
+KnowledgeGraphViewSet ..> KnowledgeGraphStore
+KnowledgeGraphViewSet ..> ProductCatalogSyncClient
+
+@enduml

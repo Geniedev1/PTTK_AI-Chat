@@ -1,0 +1,128 @@
+@startuml 23-staff-domain-class
+title Staff Domain - Design Class Diagram
+
+class User {
+  + id : int
+  + username : CharField
+  + email : EmailField
+  + password : CharField
+  + is_active : bool
+  + is_staff : bool
+  + is_superuser : bool
+  --
+  + check_password(raw) : bool
+  + set_password(raw) : void
+}
+
+class Token {
+  + key : CharField PK
+  + created : DateTimeField
+  --
+  + user : FK to User OneToOne
+}
+
+class Staff {
+  + id : int PK
+  + name : CharField
+  + email : EmailField unique
+  + phone : CharField
+  + position : CharField
+  + created_at : DateTimeField
+  + updated_at : DateTimeField
+  --
+  + user : FK to User OneToOne nullable
+}
+
+class StaffProfile {
+  + id : int PK
+  + department : CharField
+  + bio : TextField
+  + avatar_url : URLField
+  + updated_at : DateTimeField
+  --
+  + staff : FK to Staff OneToOne
+}
+
+class StaffRoleAssignment {
+  + id : int PK
+  + role_name : CharField
+  + scope : CharField
+  + is_active : bool
+  + assigned_at : DateTimeField
+  --
+  + staff : FK to Staff CASCADE
+}
+
+class StaffActivityLog {
+  + id : int PK
+  + action : CharField
+  + target_type : CharField
+  + target_id : CharField
+  + metadata : JSONField
+  + created_at : DateTimeField
+  --
+  + staff : FK to Staff SET_NULL nullable
+}
+
+class InternalAdminPermission {
+  + has_permission(request, view) : bool
+}
+
+class UserSerializer {
+  + fields : id, username, email
+}
+
+class StaffSerializer {
+  + fields : id, name, email, phone, position
+  + user : UserSerializer nested
+  + profile : nested
+  + role_assignments : nested many
+}
+
+class StaffRegisterSerializer {
+  + username : CharField
+  + password : CharField
+  + email : EmailField
+  + name : CharField
+  + position : CharField
+  --
+  + validate_username(value) : str
+  + create(validated_data) : Staff
+}
+
+class StaffLoginSerializer {
+  + username : CharField
+  + password : CharField
+}
+
+class StaffProfileUpdateSerializer {
+  + department : CharField
+  + bio : TextField
+  + avatar_url : URLField
+}
+
+class StaffViewSet {
+  + login(request) : Response
+  + register(request) : Response
+  + me(request) : Response
+  + update_profile(request) : Response
+  + list(request) : Response
+  + retrieve(request, pk) : Response
+}
+
+User "1" -- "0..1" Staff
+User "1" -- "0..1" Token
+Staff "1" -- "0..1" StaffProfile
+Staff "1" o-- "0..*" StaffRoleAssignment
+Staff "1" o-- "0..*" StaffActivityLog
+
+StaffViewSet ..> InternalAdminPermission
+StaffViewSet ..> Staff
+StaffViewSet ..> Token
+StaffViewSet ..> StaffSerializer
+StaffViewSet ..> StaffRegisterSerializer
+StaffViewSet ..> StaffLoginSerializer
+StaffViewSet ..> StaffProfileUpdateSerializer
+StaffSerializer ..> UserSerializer
+
+@enduml

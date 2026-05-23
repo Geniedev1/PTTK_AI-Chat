@@ -1,0 +1,78 @@
+@startuml 36-order-activity
+title Order Domain — Activity Diagram
+
+start
+
+:Receive request from Client;
+
+if (Request type?) then (POST create)
+  :Validate OrderCreateSerializer {customer_id, clear_cart};
+  if (Valid?) then (no)
+    :Return 400;
+    stop
+  endif
+  :Read X-Cart-Session-Key header;
+  if (session_key exists?) then (no)
+    :Return 400 No session key;
+    stop
+  endif
+  :Call cart-service GET /api/cart/current;
+  if (Cart has items?) then (no)
+    :Return 400 Cart is empty;
+    stop
+  endif
+  :For each cart item:;
+  :  Call product-service GET /api/products/{id}/;
+  :  Get {name, base_price} as snapshot;
+  :transaction.atomic();
+  :Create Order {status=PENDING, total_amount};
+  :Create OrderItems (bulk_create);
+  if (clear_cart = true?) then (yes)
+    :Call cart-service POST /api/cart/clear;
+  endif
+  :Call interaction-service emit "order_created";
+  :Return 201 Order data;
+
+elseif (GET list) then (list)
+  :Read query params {customer_id};
+  :Read X-Cart-Session-Key header;
+  :Filter Order by customer_id OR session_key;
+  :Return 200 [Order list];
+
+elseif (GET retrieve) then (retrieve)
+  :Read order id from URL;
+  :Check access permissions (customer_id or session_key);
+  if (Authorized?) then (no)
+    :Return 404;
+    stop
+  endif
+  :Return 200 Order detail (nested items + history + notes);
+
+else (POST update_status)
+  :Check X-Internal-Admin-Key;
+  if (Valid?) then (no)
+    :Return 403;
+    stop
+  endif
+  :Validate OrderStatusUpdateSerializer {status};
+  if (Valid?) then (no)
+    :Return 400;
+    stop
+  endif
+  :order.can_transition_to(new_status)?;
+  if (Valid state transition?) then (no)
+    :Return 400 Invalid transition;
+    stop
+  endif
+  :Update corresponding timestamp
+  (paid_at / confirmed_at / completed_at / cancelled_at);
+  :Create OrderStatusHistory {old_status, new_status};
+  :order.status = new_status;
+  :order.save();
+  :Call interaction-service emit corresponding event;
+  :Return 200 Updated Order;
+endif
+
+stop
+
+@enduml

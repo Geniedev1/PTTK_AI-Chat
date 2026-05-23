@@ -1,0 +1,136 @@
+@startuml 40-ai-service-activity
+title AI Service Domain — Activity Diagram
+
+start
+
+:Receive request from Client;
+
+if (Request type?) then (GET recommend/home)
+  :Validate {user_id, session_id, limit};
+  :RecommendationService.recommend_home();
+  :Call product-service fetch_products();
+  :Build empty score_cards for each product;
+  :Call interaction-service fetch_product_gaps();
+  :apply_popularity(score_cards, product_gaps);
+  if (user_id or session_id exists?) then (yes)
+    :Call interaction-service fetch_events();
+    :Call interaction-service fetch_user_interest();
+    :Call interaction-service fetch_similar_users();
+    :BehavioralProfileBuilder.build() profile;
+    :apply_actor_context (interest, affinity, graph neighbors,
+    similar users, profile bias);
+  endif
+  :DeepModelRuntime.score_candidates(feature_rows);
+  if (Deep model loaded?) then (yes)
+    :Add deep_model_bonus to score;
+  endif
+  :Rank products by score;
+  :Return 200 {context, items[]};
+
+elseif (GET recommend/product-detail) then (product-detail)
+  :Validate {product_id, user_id, session_id, limit};
+  :RecommendationService.recommend_product_detail();
+  :Load product catalog;
+  :apply_product_context (same category, brand, price);
+  :apply_graph_neighbors (product_neighbors from graph);
+  :apply_actor_context (if user/session exists);
+  :DeepModelRuntime.score_candidates();
+  :Rank, exclude current product;
+  :Return 200 {context, items[]};
+
+elseif (GET recommend/cart) then (cart)
+  :Validate {session_id, user_id, limit};
+  :Call cart-service fetch_current_cart(session_id);
+  if (Cart is empty?) then (yes)
+    :Fallback to recommend_home();
+    :Return 200 {strategy: cart-fallback-home, items[]};
+    stop
+  endif
+  :For each cart product:;
+  :  apply_product_context();
+  :  apply_graph_neighbors();
+  :apply_actor_context();
+  :DeepModelRuntime.score_candidates();
+  :Rank, exclude cart products;
+  :Return 200 {context, items[]};
+
+elseif (GET profile/snapshot) then (profile)
+  :Validate {user_id or session_id};
+  :RecommendationService.get_profile_snapshot();
+  :BehavioralProfileBuilder.build();
+  :Return 200 {user_id, session_id, profile_snapshot};
+
+elseif (GET model/status) then (model status)
+  :RecommendationService.get_model_status();
+  :DeepModelRuntime.status();
+  :Return 200 {enabled, loaded, model_version,
+  scoring_mode, fallbacks, runtime};
+
+elseif (POST chat) then (chat)
+  :Validate ChatRequestSerializer {message, user_id,
+  session_id, customer_id, product_id, order_id};
+  if (Valid?) then (no)
+    :Return 400;
+    stop
+  endif
+  :ChatbotService.chat();
+  :Emit interaction event (chat_started, chat_message_sent);
+  :_route_realtime(message);
+  if (Is it a question about order?) then (yes)
+    :Call order-service fetch_order();
+    :Return 200 {answer: order status info, realtime=true};
+    stop
+  endif
+  if (Is it a question about cart?) then (yes)
+    :Call cart-service fetch_current_cart();
+    :Return 200 {answer: cart summary, realtime=true};
+    stop
+  endif
+  if (Is it a question about price/stock?) then (yes)
+    :Call product-service fetch_product();
+    :Return 200 {answer: price/stock info, realtime=true};
+    stop
+  endif
+  if (Is it a greeting?) then (yes)
+    :BehavioralProfileBuilder.build();
+    :OpenAIClient.generate_answer (greeting prompt);
+    :Return 200 {answer: greeting, mode: greeting};
+    stop
+  endif
+  :retrieve() — Retrieve knowledge chunks;
+  :Call product-service fetch_products();
+  :Build KnowledgeChunks (products + policy files);
+  :OpenAIClient.embed_texts([query] + chunks);
+  if (Embedding successful?) then (yes)
+    :Rank chunks by cosine similarity;
+    :mode = embedding;
+  else (no)
+    :Rank chunks by lexical overlap;
+    :mode = lexical;
+  endif
+  :Apply profile bias to ranked chunks;
+  :Build graph_context (user_interest + query_paths);
+  if (should_use_general_answer?) then (yes)
+    :OpenAIClient.generate_answer (general prompt);
+    :Return 200 {answer, mode: general-openai};
+    stop
+  endif
+  :Build prompt (sources + graph + profile + history);
+  :OpenAIClient.generate_answer(prompt, question);
+  if (OpenAI returned result?) then (yes)
+    :Return 200 {answer: AI-generated, sources, mode};
+  else (no, fallback)
+    :Return fallback_answer from top chunk excerpt;
+    :Return 200 {answer: fallback, sources, mode};
+  endif
+
+else (POST chat/retrieve)
+  :Validate ChatRetrieveRequestSerializer;
+  :ChatbotService.retrieve();
+  :Return 200 {query, sources[], graph_context,
+  retrieval_mode, profile_snapshot};
+endif
+
+stop
+
+@enduml

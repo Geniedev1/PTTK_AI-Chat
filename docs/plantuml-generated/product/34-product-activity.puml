@@ -1,0 +1,92 @@
+@startuml 34-product-activity
+title Product Domain — Activity Diagram (DDD)
+
+start
+
+:Receive request from Client / Admin;
+
+if (Request type?) then (GET list)
+  :Read query params (search, category_id, in_stock, ...);
+  :Build FilterProductsQuery;
+  :ProductApplicationService.filter_products(query);
+  :DjangoProductRepository.list(filters);
+  :Return filtered queryset;
+  :Serialize ProductReadSerializer (many);
+  :emit_request_event("search_performed") to interaction-service;
+  :Return 200 [product list];
+
+elseif (GET retrieve) then (GET retrieve)
+  :Read product_id from URL;
+  :ProductApplicationService.get_product(GetProductQuery);
+  :DjangoProductRepository.get_by_id(id);
+  if (Exists?) then (no)
+    :Return 404;
+    stop
+  endif
+  :Serialize ProductReadSerializer;
+  :emit_request_event("product_viewed") to interaction-service;
+  :Return 200 Product detail;
+
+elseif (POST create) then (POST create)
+  :Check CatalogWritePermission;
+  if (X-Internal-Admin-Key valid or is_staff?) then (no)
+    :Return 403;
+    stop
+  endif
+  :Validate ProductWriteSerializer;
+  if (Valid?) then (no)
+    :Return 400;
+    stop
+  endif
+  :Build CreateProductCommand;
+  :ProductApplicationService.create_product(command);
+  :DjangoProductRepository.create(entity);
+  :Return 201 Product data;
+
+elseif (PUT update) then (PUT update)
+  :Check CatalogWritePermission;
+  if (Authorized?) then (no)
+    :Return 403;
+    stop
+  endif
+  :Validate ProductWriteSerializer;
+  if (Valid?) then (no)
+    :Return 400;
+    stop
+  endif
+  :Build UpdateProductCommand;
+  :ProductApplicationService.update_product(id, command);
+  :DjangoProductRepository.update(id, entity);
+  :Return 200 Updated Product;
+
+elseif (DELETE) then (DELETE)
+  :Check CatalogWritePermission;
+  if (Authorized?) then (no)
+    :Return 403;
+    stop
+  endif
+  :ProductApplicationService.delete_product(id);
+  :DjangoProductRepository.delete(id);
+  :Return 204 No Content;
+
+elseif (POST variants) then (variants)
+  :Check CatalogWritePermission;
+  if (Authorized?) then (no)
+    :Return 403;
+    stop
+  endif
+  :Validate VariantSerializer;
+  :Build CreateVariantCommand;
+  :ProductApplicationService.create_variant(product_id, cmd);
+  :DjangoProductRepository.create_variant(product_id, entity);
+  :Return 201 Variant data;
+
+else (GET in_stock)
+  :Filter products with stock > 0 and is_active=True;
+  :Serialize ProductReadSerializer (many);
+  :Return 200 [in-stock products];
+endif
+
+stop
+
+@enduml

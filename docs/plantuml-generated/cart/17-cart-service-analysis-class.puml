@@ -1,0 +1,150 @@
+@startuml 17-cart-service-analysis-class
+
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam defaultFontSize 11
+skinparam class {
+  FontStyle bold
+}
+
+package "Domain Layer\n(Models)" as DOMAIN {
+
+  class Cart <<Entity>> {
+    + id : int <<PK>>
+    + session_key : str <<INDEX>>
+    + customer_id : int (nullable, cross-service)
+    + product_id : int (cross-service ref)
+    + quantity : int
+    + price_snapshot : Decimal (nullable)
+    + created_at : datetime
+    + updated_at : datetime
+    --
+    UNIQUE(session_key, product_id)
+  }
+
+  class CartSession <<Entity>> {
+    + id : int <<PK>>
+    + session_key : str <<UNIQUE>>
+    + customer_id : int (nullable, cross-service)
+    + created_at : datetime
+    + updated_at : datetime
+  }
+
+  class CartSnapshot <<Entity>> {
+    + id : int <<PK>>
+    + session_key : str
+    + customer_id : int (nullable)
+    + item_count : int
+    + total_quantity : int
+    + subtotal_amount : Decimal
+    + snapshot : JSON
+    + created_at : datetime
+  }
+
+  class CartEvent <<Entity>> {
+    + id : int <<PK>>
+    + session_key : str
+    + customer_id : int (nullable)
+    + event_type : str
+    + product_id : int (nullable)
+    + metadata : JSON
+    + created_at : datetime
+  }
+}
+
+package "Presentation & Application Layer\n(Views, Serializers)" as APP {
+
+  class CartViewSet <<Controller>> {
+    + current(request) : Response
+    + add_product(request) : Response
+    + remove_product(request) : Response
+    + update_quantity(request) : Response
+    + clear_cart(request) : Response
+    - _get_or_create_session(request) : (CartSession, str)
+    - _fetch_product_price(product_id) : Decimal
+    - _emit_cart_event(event_type, session_key, ...)
+    - _build_cart_response(items, session) : dict
+  }
+
+  class CartSerializer <<Serializer/DTO>> {
+    + id; session_key; product_id
+    + quantity; price_snapshot
+    + created_at; updated_at
+  }
+
+  class CartAddSerializer <<Serializer/DTO>> {
+    + product_id : int (min=1)
+    + quantity : int (default=1, min=1)
+  }
+
+  class CartUpdateSerializer <<Serializer/DTO>> {
+    + product_id : int (min=1)
+    + quantity : int (min=1)
+  }
+
+  class CartSessionSerializer <<Serializer/DTO>> {
+    + id; session_key; customer_id
+    + created_at; updated_at
+  }
+
+  class ProductServiceClient <<External HTTP>> {
+    + get_price(product_id) : Decimal
+  }
+}
+
+CartSession "1" ..o{ Cart : "logic link via session_key\n(no DB FK)"
+CartSession "1" ..o{ CartSnapshot : "logic link via session_key"
+CartSession "1" ..o{ CartEvent : "logic link via session_key"
+
+CartViewSet ..> Cart : "CRUD cart items"
+CartViewSet ..> CartSession : "get_or_create session"
+CartViewSet ..> CartSnapshot : "save snapshot on current()"
+CartViewSet ..> CartEvent : "emit events on changes"
+CartViewSet ..> CartSerializer : "output items"
+CartViewSet ..> CartAddSerializer : "input (add)"
+CartViewSet ..> CartUpdateSerializer : "input (update_quantity)"
+CartViewSet ..> CartSessionSerializer : "output session info"
+CartViewSet ..> ProductServiceClient : "fetch price_snapshot\nfrom product-service"
+
+note bottom of CartViewSet
+  Session Management:
+  - Read X-Cart-Session-Key header
+  - If not present → create new CartSession (uuid4())
+  - Return X-Cart-Session-Key in response header
+
+  add_product():
+  - CartSession get_or_create
+  - Fetch price_snapshot from product-service
+  - Cart.objects.get_or_create(session_key, product_id)
+  - If already exists → increase quantity
+  - emit CartEvent: cart_item_added
+
+  current():
+  - Get all Cart items by session_key
+  - Save CartSnapshot
+  - emit CartEvent: cart_viewed
+  - Return {items, session_key, subtotal}
+
+  clear_cart():
+  - Delete all Cart items of session
+  - emit CartEvent: cart_cleared
+end note
+
+note right of Cart
+  UniqueConstraint: (session_key, product_id)
+  Ensures each session has only 1 row
+  per product.
+  When adding a product that already exists → update quantity,
+  do not insert a new row.
+end note
+
+note right of CartEvent
+  event_type values:
+  - cart_viewed
+  - cart_item_added
+  - cart_item_removed
+  - cart_item_quantity_updated
+  - cart_cleared
+end note
+
+@enduml

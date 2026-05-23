@@ -1,0 +1,88 @@
+@startuml 48-interaction-sequence
+title Interaction Domain - Sequence Diagram
+
+participant Client
+participant InteractionEventViewSet
+participant KnowledgeGraphViewSet
+participant KnowledgeGraphStore
+participant ProductCatalogSyncClient
+database InteractionDB
+database Neo4jDB
+
+== Record Interaction Event ==
+
+Client -> InteractionEventViewSet : POST /api/interactions/events\n{event_type, user_id, session_id, product_id, metadata}
+InteractionEventViewSet -> InteractionEventViewSet : validate InteractionEventCreateSerializer
+
+alt missing user_id and session_id
+  InteractionEventViewSet --> Client : 400 Identity required
+else validation failed
+  InteractionEventViewSet --> Client : 400 Bad Request
+else valid
+  InteractionEventViewSet -> InteractionDB : InteractionEvent.create(signal_weight auto-set)
+  InteractionDB --> InteractionEventViewSet : event saved
+
+  InteractionEventViewSet -> InteractionDB : BehaviorProfile.get_or_create(user_id, session_id)
+  InteractionDB --> InteractionEventViewSet : profile
+  InteractionEventViewSet -> InteractionDB : profile.event_count += 1; profile.save()
+  InteractionDB --> InteractionEventViewSet : updated
+
+  alt event_type = search_performed
+    InteractionEventViewSet -> InteractionDB : SearchQueryLog.create(query_text)
+    InteractionDB --> InteractionEventViewSet : log saved
+  end
+
+  InteractionEventViewSet -> InteractionDB : EventAggregate.update_or_create(metric, date, dimension)
+  InteractionDB --> InteractionEventViewSet : aggregate updated
+
+  alt GRAPH_SYNC_ON_WRITE = True
+    InteractionEventViewSet -> KnowledgeGraphStore : sync_interaction_event(event)
+    KnowledgeGraphStore -> Neo4jDB : MERGE Actor node (User or Session)
+    KnowledgeGraphStore -> Neo4jDB : MERGE Product node
+    KnowledgeGraphStore -> Neo4jDB : MERGE weighted relationship
+    Neo4jDB --> KnowledgeGraphStore : synced
+    KnowledgeGraphStore --> InteractionEventViewSet : ok
+  end
+
+  InteractionEventViewSet --> Client : 201 InteractionEvent data
+end
+
+== Rebuild Knowledge Graph ==
+
+Client -> KnowledgeGraphViewSet : POST /api/interactions/graph/rebuild\nX-Internal-Admin-Key: <key>
+KnowledgeGraphViewSet -> KnowledgeGraphViewSet : check InternalAdminPermission
+
+alt permission denied
+  KnowledgeGraphViewSet --> Client : 403 Forbidden
+else permitted
+  KnowledgeGraphViewSet -> ProductCatalogSyncClient : fetch_products()
+  ProductCatalogSyncClient --> KnowledgeGraphViewSet : product list
+  KnowledgeGraphViewSet -> ProductCatalogSyncClient : fetch_categories()
+  ProductCatalogSyncClient --> KnowledgeGraphViewSet : category list
+  KnowledgeGraphViewSet -> KnowledgeGraphStore : clear_graph()
+  KnowledgeGraphStore -> Neo4jDB : DELETE all nodes and relationships
+  Neo4jDB --> KnowledgeGraphStore : cleared
+  KnowledgeGraphViewSet -> KnowledgeGraphStore : sync_product_catalog(products, categories)
+  KnowledgeGraphStore -> Neo4jDB : MERGE Product, Category, Brand nodes
+  Neo4jDB --> KnowledgeGraphStore : synced
+  loop for each interaction event
+    KnowledgeGraphViewSet -> KnowledgeGraphStore : sync_interaction_event(event)
+    KnowledgeGraphStore -> Neo4jDB : MERGE actor and product relationships
+    Neo4jDB --> KnowledgeGraphStore : ok
+  end
+  KnowledgeGraphViewSet -> KnowledgeGraphStore : refresh_similarity_edges()
+  KnowledgeGraphStore -> Neo4jDB : CREATE SIMILAR_TO edges between products
+  Neo4jDB --> KnowledgeGraphStore : done
+  KnowledgeGraphViewSet --> Client : 200 {rebuilt: true, stats}
+end
+
+== Get User Interest from Graph ==
+
+Client -> KnowledgeGraphViewSet : GET /api/interactions/graph/user_interest\n?user_id=5&limit=10
+KnowledgeGraphViewSet -> KnowledgeGraphStore : user_interest(user_id, session_id, limit)
+KnowledgeGraphStore -> Neo4jDB : MATCH (a)-[r]->(p:Product) WHERE a.user_id=5
+Neo4jDB --> KnowledgeGraphStore : category and product interest list
+KnowledgeGraphStore --> KnowledgeGraphViewSet : interest list
+KnowledgeGraphViewSet --> Client : 200 interest list
+
+@enduml

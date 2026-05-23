@@ -208,7 +208,7 @@ class OpenAIClient:
     def __init__(self):
         self.base_url = getattr(settings, "OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
         self.api_key = getattr(settings, "OPENAI_API_KEY", "")
-        self.chat_model = getattr(settings, "OPENAI_CHAT_MODEL", "gpt-5-mini")
+        self.chat_model = getattr(settings, "OPENAI_CHAT_MODEL", "gpt-4o-mini")
         self.embedding_model = getattr(settings, "OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
         self.timeout = getattr(settings, "REQUEST_TIMEOUT_SECONDS", 10)
 
@@ -227,37 +227,32 @@ class OpenAIClient:
             return None
         payload = {
             "model": self.chat_model,
-            "instructions": prompt,
-            "input": [
-                {
-                    "role": "user",
-                    "content": [{"type": "input_text", "text": question}],
-                }
+            "messages": [
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": question},
             ],
+            "max_tokens": 1024,
+            "temperature": 0.7,
         }
         try:
             response = requests.post(
-                f"{self.base_url}/responses",
+                f"{self.base_url}/chat/completions",
                 headers=self._headers(),
                 json=payload,
                 timeout=self.timeout,
             )
             response.raise_for_status()
         except requests.RequestException as exc:
-            logger.warning("OpenAI response request failed: %s", exc)
+            logger.warning("OpenAI chat/completions request failed: %s", exc)
             return None
 
         data = response.json()
-        if data.get("output_text"):
-            return data["output_text"].strip()
-
-        parts = []
-        for output in data.get("output", []):
-            for content in output.get("content", []):
-                if content.get("type") == "output_text" and content.get("text"):
-                    parts.append(content["text"])
-        joined = "\n".join(part.strip() for part in parts if part.strip()).strip()
-        return joined or None
+        # Chat Completions API: choices[0].message.content
+        choices = data.get("choices") or []
+        if choices:
+            content = (choices[0].get("message") or {}).get("content") or ""
+            return content.strip() or None
+        return None
 
     def embed_texts(self, texts):
         if not self.enabled or not getattr(settings, "OPENAI_ENABLE_EMBEDDINGS", True) or not texts:

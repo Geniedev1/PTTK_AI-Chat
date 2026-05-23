@@ -1,0 +1,195 @@
+@startuml 21-interaction-service-analysis-class
+
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam defaultFontSize 11
+skinparam class {
+  FontStyle bold
+}
+
+package "Domain Layer\n(PostgreSQL Models)" as DOMAIN {
+
+  class InteractionEvent <<Entity>> {
+    + id : int <<PK>>
+    + event_id : UUID <<UNIQUE>>
+    + event_type : str (26 event types)
+    + user_id : int (nullable, cross-service)
+    + session_id : str (nullable)
+    + product_id : int (nullable, cross-service)
+    + query_text : str (nullable)
+    + source : str [backend|frontend]
+    + signal_weight : int (auto-assigned)
+    + timestamp : datetime
+    + metadata : JSON
+    + created_at : datetime
+    --
+    + save() : auto-set signal_weight from EVENT_SIGNAL_WEIGHTS
+  }
+
+  class BehaviorProfile <<Entity>> {
+    + id : int <<PK>>
+    + user_id : int (nullable)
+    + session_id : str (nullable)
+    + profile_json : JSON
+    + event_count : int
+    + last_event_at : datetime (nullable)
+    + updated_at : datetime
+    + created_at : datetime
+  }
+
+  class SearchQueryLog <<Entity>> {
+    + id : int <<PK>>
+    + user_id : int (nullable)
+    + session_id : str (nullable)
+    + query_text : str
+    + result_count : int
+    + product_ids : JSON
+    + created_at : datetime
+  }
+
+  class EventAggregate <<Entity>> {
+    + id : int <<PK>>
+    + metric_name : str
+    + metric_date : date
+    + dimension : str
+    + metric_value : int
+    + metadata : JSON
+    + updated_at : datetime
+    --
+    UNIQUE(metric_name, metric_date, dimension)
+  }
+
+  class EventSignalWeights <<Configuration>> {
+    search_performed = 1
+    product_clicked = 2
+    product_viewed = 1
+    cart_item_added = 4
+    cart_item_removed = 1
+    order_created = 5
+    order_paid = 6
+    order_cancelled = -2
+    order_completed = 6
+    payment_paid = 6
+    payment_failed = -2
+    shipment_delivered = 4
+    chat_message_sent = 2
+  }
+}
+
+package "Knowledge Graph Layer\n(Neo4j 5.19)" as NEO4J {
+
+  class KnowledgeGraphStore <<Service/Repository>> {
+    + enabled : bool
+    + driver : neo4j.GraphDatabase
+    --
+    + status() : dict
+    + clear_graph() : void
+    + sync_product_catalog(products, categories) : dict
+    + sync_interaction_event(event: dict) : bool
+    + rebuild_graph(products, categories, interactions) : dict
+    + refresh_similarity_edges() : dict
+    + user_interest(user_id, session_id, limit) : list
+    + product_neighbors(product_id, limit) : list
+    + query_paths(product_id, query_text, limit) : list
+    + similar_users(user_id, session_id, limit) : list
+    - _merge_actor(user_id, session_id) : dict
+    - _merge_weighted_relationship(...) : void
+    - _run(query, **params) : list
+  }
+
+  class ProductCatalogClient <<External HTTP>> {
+    + fetch_categories() : list
+    + fetch_products() : list
+  }
+}
+
+package "Presentation Layer\n(Views, Serializers)" as APP {
+
+  class InteractionEventViewSet <<Controller>> {
+    + create(request) : Response
+    + list(request) : Response
+    + data_quality(request) : Response
+    + top_queries(request) : Response
+    + product_gaps(request) : Response
+    + abandoned_carts(request) : Response
+    + signal_weights(request) : Response
+  }
+
+  class KnowledgeGraphViewSet <<Controller>> {
+    + status(request) : Response
+    + rebuild(request) : Response
+    + user_interest(request) : Response
+    + product_neighbors(request) : Response
+    + query_paths(request) : Response
+    + similar_users(request) : Response
+  }
+
+  class InteractionEventSerializer <<Serializer/DTO>> {
+    id; event_id; event_type
+    user_id; session_id; product_id
+    query_text; source; signal_weight
+    timestamp; metadata; created_at
+  }
+
+  class InteractionEventCreateSerializer <<Serializer/DTO>> {
+    event_type; user_id; session_id
+    product_id; query_text; source
+    timestamp; metadata
+    --
+    + validate(attrs) : dict
+  }
+}
+
+InteractionEvent ..> EventSignalWeights : "signal_weight = EVENT_SIGNAL_WEIGHTS[event_type]"
+InteractionEvent ..> BehaviorProfile : "upsert BehaviorProfile\nafter each event create"
+InteractionEvent ..> SearchQueryLog : "create SearchQueryLog\nif event_type='search_performed'"
+InteractionEvent ..> EventAggregate : "increment metric_value\nafter each event create"
+InteractionEvent ..> KnowledgeGraphStore : "sync_interaction_event()\nif GRAPH_SYNC_ON_WRITE=true"
+
+InteractionEventViewSet ..> InteractionEvent : "CRUD + analytics"
+InteractionEventViewSet ..> BehaviorProfile : "read profile data"
+InteractionEventViewSet ..> SearchQueryLog : "top_queries()"
+InteractionEventViewSet ..> EventAggregate : "analytics queries"
+InteractionEventViewSet ..> InteractionEventSerializer : "output"
+InteractionEventViewSet ..> InteractionEventCreateSerializer : "input"
+
+KnowledgeGraphViewSet ..> KnowledgeGraphStore : "delegates graph operations"
+KnowledgeGraphViewSet ..> ProductCatalogClient : "fetch catalog for rebuild"
+
+KnowledgeGraphStore ..> ProductCatalogClient : "fetch products + categories\nduring rebuild_graph()"
+
+note right of KnowledgeGraphStore
+  Neo4j Node Labels:
+  Actor:User {user_id}
+  Actor:Session {session_id}
+  Product {product_id}
+  Category {category_id}
+  Brand {brand_id}
+  Query {text}
+
+  Weighted Relationships (count, weight,
+  last_interacted_at, event_types[]):
+  INTERACTED_WITH, VIEWED, CLICKED,
+  ADDED_TO_CART, REMOVED_FROM_CART,
+  UPDATED_CART, PURCHASED, CANCELLED_ORDER,
+  SEARCHED, MATCHES, BELONGS_TO, OF_BRAND,
+  IDENTIFIED_AS, SIMILAR_TO
+end note
+
+note bottom of InteractionEventViewSet
+  data_quality():
+  Completeness analysis:
+  - % events with product_id
+  - % events with user_id
+  - % events with query_text
+
+  product_gaps():
+  Products viewed but not purchased
+  (view → no purchase funnel gap)
+
+  abandoned_carts():
+  Sessions with cart_item_added but
+  no order_created
+end note
+
+@enduml

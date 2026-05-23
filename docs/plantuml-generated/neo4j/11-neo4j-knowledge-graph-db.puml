@@ -1,0 +1,128 @@
+@startuml 11-neo4j-knowledge-graph-db
+
+skinparam defaultFontName Arial
+skinparam defaultFontSize 11
+
+skinparam class {
+  FontStyle bold
+}
+skinparam shadowing false
+
+class "Actor:User\n(Logged in user)" as NodeUser <<Node>> {
+  + user_id : INTEGER <<INDEX>>
+  --
+  Note: dual label Actor + User
+  Merge using: MERGE (:Actor:User {user_id: $user_id})
+}
+
+class "Actor:Session\n(Anonymous session)" as NodeSession <<Node>> {
+  + session_id : STRING <<INDEX>>
+  --
+  Note: dual label Actor + Session
+  Merge using: MERGE (:Actor:Session {session_id: $session_id})
+}
+
+class "Product" as NodeProduct <<Node>> {
+  + product_id : INTEGER <<INDEX>>
+  --
+  name : STRING
+  slug : STRING
+  short_description : STRING
+  description : STRING
+  base_price : STRING
+  stock : INTEGER
+  is_active : BOOLEAN
+  status : STRING
+  tags : LIST[STRING]
+  attributes_json : STRING (JSON)
+  product_type_id : INTEGER
+  last_seen_at : STRING (ISO datetime)
+}
+
+class "Category" as NodeCategory <<Node>> {
+  + category_id : INTEGER <<INDEX>>
+  --
+  name : STRING
+  slug : STRING
+  parent_id : INTEGER (nullable)
+}
+
+class "Brand" as NodeBrand <<Node>> {
+  + brand_id : INTEGER <<INDEX>>
+  --
+  name : STRING
+}
+
+class "Query\n(Search query)" as NodeQuery <<Node>> {
+  + text : STRING <<INDEX>>
+  --
+  last_seen_at : STRING (ISO datetime)
+}
+
+NodeUser --> NodeProduct : "INTERACTED_WITH\n[count, weight, last_interacted_at,\nlast_event_type, event_types[]]"
+NodeSession --> NodeProduct : "INTERACTED_WITH\n[count, weight, last_interacted_at,\nlast_event_type, event_types[]]"
+
+NodeUser --> NodeProduct : "VIEWED\n(event: product_viewed)\n[count, weight, last_interacted_at]"
+NodeUser --> NodeProduct : "CLICKED\n(event: product_clicked)\n[count, weight, last_interacted_at]"
+NodeUser --> NodeProduct : "ADDED_TO_CART\n(event: cart_item_added)\n[count, weight, last_interacted_at]"
+NodeUser --> NodeProduct : "REMOVED_FROM_CART\n(event: cart_item_removed)\n[count, weight, last_interacted_at]"
+NodeUser --> NodeProduct : "UPDATED_CART\n(event: cart_item_quantity_updated)\n[count, weight, last_interacted_at]"
+NodeUser --> NodeProduct : "PURCHASED\n(event: order_paid / order_completed)\n[count, weight, last_interacted_at]"
+NodeUser --> NodeProduct : "CANCELLED_ORDER\n(event: order_cancelled)\n[count, weight, last_interacted_at]"
+
+NodeSession --> NodeProduct : "VIEWED / CLICKED / ADDED_TO_CART\nREMOVED_FROM_CART / UPDATED_CART\nPURCHASED / CANCELLED_ORDER\n(similar to User)"
+
+NodeUser --> NodeQuery : "SEARCHED\n[count, weight, last_interacted_at,\nlast_event_type, event_types[]]"
+NodeSession --> NodeQuery : "SEARCHED\n[count, weight, last_interacted_at,\nlast_event_type, event_types[]]"
+
+NodeSession --> NodeUser : "IDENTIFIED_AS\n(when session_id + user_id appear together\nin 1 event)"
+
+NodeProduct --> NodeCategory : "BELONGS_TO\n(from product.category_id\nor event.metadata.category_id)"
+NodeProduct --> NodeBrand : "OF_BRAND\n(from product.brand_id\nor event.metadata.brand_id)"
+
+NodeQuery --> NodeProduct : "MATCHES\n(search result → product)\n[count, weight, last_seen_at]"
+
+NodeProduct --> NodeProduct : "SIMILAR_TO\n(computed by refresh_similarity_edges())\n[score, shared_actor_count,\ncategory_bonus, brand_bonus]"
+
+note bottom of NodeProduct
+  Created/updated via:
+  1. sync_product_catalog() on rebuild graph
+  2. sync_interaction_event() when GRAPH_SYNC_ON_WRITE=true
+  Uses MERGE for idempotency (no duplicate creation).
+end note
+
+note bottom of NodeProduct
+  SIMILAR_TO calculated by:
+  refresh_similarity_edges()
+  Algorithm:
+  - Co-interaction: same Actor INTERACTED_WITH 2 products
+  - overlap_weight = min(r1.weight, r2.weight)
+  - category_bonus = +2 if same Category
+  - brand_bonus = +1 if same Brand
+  - similarity_score = overlap + category + brand
+  Bidirectional relationship.
+end note
+
+note top of NodeUser
+  Indexes (created in clear_graph()):
+  - product_id_index FOR (p:Product) ON (p.product_id)
+  - category_id_index FOR (c:Category) ON (c.category_id)
+  - brand_id_index FOR (b:Brand) ON (b.brand_id)
+  - user_id_index FOR (u:Actor) ON (u.user_id)
+  - session_id_index FOR (s:Actor) ON (s.session_id)
+  - query_text_index FOR (q:Query) ON (q.text)
+end note
+
+note top of NodeQuery
+  Supported Graph Queries:
+  1. user_interest(user_id/session_id)
+     → Categories the user frequently interacts with
+  2. product_neighbors(product_id)
+     → Products SIMILAR_TO or co-interacted
+  3. query_paths(product_id/query_text)
+     → Query → Product or Product → Query
+  4. similar_users(user_id/session_id)
+     → Other users with a similar pattern
+end note
+
+@enduml

@@ -1,0 +1,130 @@
+@startuml 12-system-analysis-class
+
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam defaultFontSize 11
+skinparam class {
+  FontStyle bold
+}
+
+package "API Gateway\n:80" as GW {
+  class ProxyView {
+    + proxy_request(request)
+    + gateway_root(request)
+    + gateway_health(request)
+    - _resolve_backend_base(path) : str
+    - _build_forward_headers(request) : dict
+  }
+  class CorsMiddleware {
+    + __call__(request)
+    - _resolve_origin(request) : str
+  }
+  class ServiceRoutes <<config>> {
+    /api/staff/ → staff-service:8001
+    /api/customers/ → customer-service:8002
+    /api/cart/ → cart-service:8003
+    /api/products/ → product-service:8004
+    /api/orders/ → order-service:8005
+    /api/interactions/ → interaction-service:8006
+    /api/ai/ → ai-service:8007
+    /api/payments/ → payment-service:8008
+    /api/shipping/ → shipping-service:8009
+  }
+}
+
+package "Staff Service\n:8001 / MySQL" as SS {
+  class Staff { id; name; email; position }
+  class StaffProfile { department; bio; avatar_url }
+  class StaffRoleAssignment { role_name; scope; is_active }
+  class StaffViewSet <<Controller>> { login(); me(); register() }
+}
+
+package "Customer Service\n:8002 / MySQL" as CS {
+  class Customer { id; phone; address; city; country }
+  class CustomerProfile { full_name; date_of_birth; gender }
+  class CustomerAddress { recipient_name; phone; is_default }
+  class CustomerViewSet <<Controller>> { register(); login(); profile(); update_profile() }
+}
+
+package "Product Service\n:8004 / PostgreSQL / DDD" as PS {
+  class Product <<Entity>> { id; name; slug; base_price; stock; is_active }
+  class Variant <<Entity>> { id; sku; stock; price_override }
+  class Category <<Entity>> { id; name; slug; parent_id }
+  class Brand <<Entity>> { id; name; slug }
+  class ProductApplicationService <<Service>> { create_product(); update_product(); filter_products(); list_products() }
+  class ProductViewSet <<Controller>> { list(); retrieve(); create(); update(); destroy(); search(); in_stock(); variants() }
+}
+
+package "Cart Service\n:8003 / PostgreSQL" as CartSvc {
+  class Cart { id; session_key; product_id; quantity; price_snapshot }
+  class CartSession { session_key; customer_id }
+  class CartViewSet <<Controller>> { current(); add_product(); remove_product(); update_quantity(); clear_cart() }
+}
+
+package "Order Service\n:8005 / PostgreSQL" as OS {
+  class Order { id; status; total_amount; session_key; customer_id }
+  class OrderItem { product_id; product_name_snapshot; price_snapshot; quantity }
+  class OrderStatusHistory { old_status; new_status; changed_by }
+  class OrderViewSet <<Controller>> { list(); retrieve(); create(); update_status() }
+}
+
+package "Payment Service\n:8008 / PostgreSQL" as PAY {
+  class Payment { id; status; amount; provider; idempotency_key }
+  class PaymentTransaction { transaction_type; amount; status }
+  class PaymentViewSet <<Controller>> { create(); confirm(); fail(); cancel(); refund() }
+}
+
+package "Shipping Service\n:8009 / PostgreSQL" as SHP {
+  class Shipment { id; status; tracking_number; order_id; carrier }
+  class ShipmentTrackingEvent { status; description; event_time }
+  class ShipmentViewSet <<Controller>> { create(); mark_ready(); ship(); deliver(); cancel(); fail() }
+}
+
+package "Interaction Service\n:8006 / PostgreSQL + Neo4j" as IS {
+  class InteractionEvent { event_id; event_type; user_id; session_id; product_id; signal_weight }
+  class BehaviorProfile { user_id; session_id; event_count; profile_json }
+  class KnowledgeGraphStore <<Service>> { sync_interaction_event(); rebuild_graph(); user_interest(); product_neighbors(); similar_users() }
+  class InteractionViewSet <<Controller>> { create(); list(); data_quality(); top_queries(); signal_weights() }
+  class KnowledgeGraphViewSet <<Controller>> { status(); rebuild(); user_interest(); product_neighbors() }
+}
+
+package "AI Service\n:8007 / SQLite" as AI {
+  class RecommendationRequest { user_id; session_id; strategy; context }
+  class ChatSession { user_id; session_id; started_at; last_message_at }
+  class ChatMessage { role; message; retrieval_mode; sources }
+  class RecommendationViewSet <<Controller>> { home(); product_detail(); cart(); profile_snapshot() }
+  class ChatViewSet <<Controller>> { create(); retrieve_context() }
+}
+
+ProxyView ..> SS : "routes /api/staff/"
+ProxyView ..> CS : "routes /api/customers/"
+ProxyView ..> PS : "routes /api/products/"
+ProxyView ..> CartSvc : "routes /api/cart/"
+ProxyView ..> OS : "routes /api/orders/"
+ProxyView ..> PAY : "routes /api/payments/"
+ProxyView ..> SHP : "routes /api/shipping/"
+ProxyView ..> IS : "routes /api/interactions/"
+ProxyView ..> AI : "routes /api/ai/"
+
+OrderViewSet ..> CartSvc : "HTTP: GET /api/cart/current\n(create order from cart)"
+PaymentViewSet ..> OS : "HTTP: GET+POST /api/orders/{id}\n(fetch order, update status→PAID)"
+ShipmentViewSet ..> OS : "HTTP: GET+POST /api/orders/{id}\n(verify PAID, update→COMPLETED)"
+RecommendationViewSet ..> IS : "HTTP: GET /api/interactions/graph/\n(user_interest, product_neighbors)"
+ChatViewSet ..> IS : "HTTP: GET /api/interactions/\n(graph context)"
+InteractionViewSet ..> KnowledgeGraphStore : "sync on write\n(GRAPH_SYNC_ON_WRITE=true)"
+
+note top of GW
+  Single Entry Point.
+  Reverse-proxies all requests to backend services.
+  No separate database.
+  CorsMiddleware handles preflight (OPTIONS).
+end note
+
+note bottom of AI
+  AI Service calls:
+  - interaction-service (graph queries)
+  - product-service (product data)
+  - OpenAI API (LLM for chatbot)
+end note
+
+@enduml

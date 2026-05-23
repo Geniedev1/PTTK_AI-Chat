@@ -1,0 +1,98 @@
+@startuml 10-ai-service-db
+
+skinparam linetype ortho
+skinparam entity {
+  FontStyle bold
+}
+skinparam shadowing false
+skinparam defaultFontName Arial
+skinparam defaultFontSize 11
+
+entity "recommendations_recommendationrequest\n(RecommendationRequest)" as RecommendationRequest {
+  * id : INTEGER <<PK, AUTO>>
+  --
+  user_id : INTEGER <<nullable, INDEX>>\n(denormalized - cross-service)
+  session_id : VARCHAR(64) <<nullable, INDEX>>
+  strategy : VARCHAR(64)\n[e.g. 'home', 'product_detail', 'cart']
+  context : JSON [default={}]
+  created_at : DATETIME
+  --
+  INDEX (strategy, created_at)
+}
+
+entity "recommendations_recommendationresult\n(RecommendationResult)" as RecommendationResult {
+  * id : INTEGER <<PK, AUTO>>
+  --
+  # request_id : INTEGER <<FK → recommendations_recommendationrequest.id, CASCADE>>
+  product_id : INTEGER <<INDEX>>\n(denormalized - cross-service)
+  score : FLOAT [default=0]
+  deep_model_score : FLOAT <<nullable>>
+  reason_codes : JSON [default=[]]
+  source_signals : JSON [default={}]
+  rank_position : INTEGER [default=0]
+  created_at : DATETIME
+  --
+  INDEX (product_id, score)
+}
+
+entity "recommendations_chatsession\n(ChatSession)" as ChatSession {
+  * id : INTEGER <<PK, AUTO>>
+  --
+  user_id : INTEGER <<nullable, INDEX>>\n(denormalized - cross-service)
+  session_id : VARCHAR(64) <<nullable, INDEX>>
+  started_at : DATETIME
+  last_message_at : DATETIME
+  metadata : JSON [default={}]
+  --
+  INDEX (user_id, session_id)
+}
+
+entity "recommendations_chatmessage\n(ChatMessage)" as ChatMessage {
+  * id : INTEGER <<PK, AUTO>>
+  --
+  # chat_session_id : INTEGER <<FK → recommendations_chatsession.id, CASCADE>>
+  role : VARCHAR(20) [USER='user' | ASSISTANT='assistant']
+  message : TEXT
+  retrieval_mode : VARCHAR(64)
+  sources : JSON [default=[]]
+  created_at : DATETIME
+}
+
+RecommendationRequest ||--o{ RecommendationResult : "request_id (ForeignKey, CASCADE)\nrelated_name='results'"
+ChatSession ||--o{ ChatMessage : "chat_session_id (ForeignKey, CASCADE)\nrelated_name='messages'"
+
+note right of RecommendationRequest
+  strategy = called endpoint name:
+  - 'home' (recommend_home)
+  - 'product_detail' (recommend_product_detail)
+  - 'cart' (recommend_cart)
+  context: JSON containing context information
+  (user profile, product info, cart items...)
+end note
+
+note right of RecommendationResult
+  score: aggregate score from signal scoring
+  deep_model_score: score from Sequence Model
+    (RNN/LSTM/BiLSTM/GRU/1D-CNN/Self-Attention)
+  reason_codes: recommendation reasons
+  source_signals: detailed contributing signals
+  rank_position: rank in the result list
+end note
+
+note right of ChatMessage
+  role: 'user' (user message) or
+        'assistant' (AI response)
+  retrieval_mode: RAG method used
+  sources: list of document sources used
+    to generate the answer (product IDs, KB chunks)
+end note
+
+note bottom of ChatSession
+  AI Service does not have a separate configured DB
+  in docker-compose.yml.
+  Uses default Django SQLite or same DB if additionally
+  configured.
+  (See: ai-service/ai_service/settings.py)
+end note
+
+@enduml

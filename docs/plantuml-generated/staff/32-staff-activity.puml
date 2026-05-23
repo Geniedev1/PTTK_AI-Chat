@@ -1,0 +1,71 @@
+@startuml 32-staff-activity
+title Staff Domain — Activity Diagram
+
+start
+
+:Receive request from Admin/Client;
+
+if (Request type?) then (register)
+  :Read {username, password, email, name, position};
+  if (Data valid?) then (no)
+    :Return 400 Bad Request;
+    stop
+  endif
+  if (Username already exists?) then (yes)
+    :Return 400 ValidationError;
+    stop
+  endif
+  :transaction.atomic();
+  :Create User (create_user);
+  :Create Staff (link user);
+  :Return 201 Staff data;
+
+elseif (login) then (login)
+  :Read {username, password};
+  :authenticate(username, password);
+  if (Authentication successful?) then (no)
+    :Return 401;
+    stop
+  endif
+  if (is_active?) then (no)
+    :Return 403;
+    stop
+  endif
+  :Token.get_or_create(user);
+  :Return 200 {token, staff};
+
+elseif (me) then (me)
+  :Check InternalAdminPermission;
+  if (Authorized?) then (no)
+    :Return 403;
+    stop
+  endif
+  :Get Staff from token.user;
+  :Serialize (user + profile + roles);
+  :Return 200 Staff detail;
+
+elseif (update_profile) then (update_profile)
+  :Check InternalAdminPermission;
+  if (Authorized?) then (no)
+    :Return 403;
+    stop
+  endif
+  :Read {department, bio, avatar_url};
+  :StaffProfile.get_or_create(staff);
+  :Update fields;
+  :profile.save();
+  :Return 200 Updated profile;
+
+else (list/retrieve)
+  :Check InternalAdminPermission;
+  if (Authorized?) then (no)
+    :Return 403;
+    stop
+  endif
+  :Query Staff queryset;
+  :Return 200 list or detail;
+endif
+
+stop
+
+@enduml
