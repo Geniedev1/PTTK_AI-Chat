@@ -68,11 +68,15 @@ DEEP_MODEL_SCORE_CLIP_MIN = float(os.getenv("DEEP_MODEL_SCORE_CLIP_MIN", "0.0"))
 DEEP_MODEL_SCORE_CLIP_MAX = float(os.getenv("DEEP_MODEL_SCORE_CLIP_MAX", "1.0"))
 CHAT_RETRIEVAL_LIMIT = int(os.getenv("CHAT_RETRIEVAL_LIMIT", "5"))
 CHAT_HISTORY_LIMIT = int(os.getenv("CHAT_HISTORY_LIMIT", "4"))
+AI_PROVIDER = os.getenv("AI_PROVIDER", "openai").strip().lower()
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_CHAT_MODEL = os.getenv("OPENAI_CHAT_MODEL", "gpt-5-mini")
 OPENAI_EMBEDDING_MODEL = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
 OPENAI_ENABLE_EMBEDDINGS = os.getenv("OPENAI_ENABLE_EMBEDDINGS", "true").lower() == "true"
+GEMINI_BASE_URL = os.getenv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta").rstrip("/")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_CHAT_MODEL = os.getenv("GEMINI_CHAT_MODEL", "gemini-flash-lite-latest")
 KNOWLEDGE_BASE_DIR = Path(os.getenv("KNOWLEDGE_BASE_DIR", BASE_DIR / "knowledge_base"))
 
 LOGGING = {

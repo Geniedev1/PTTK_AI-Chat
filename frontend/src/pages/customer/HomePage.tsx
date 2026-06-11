@@ -1,12 +1,18 @@
 import { useQuery } from "@tanstack/react-query"
 import { Link } from "react-router-dom"
-import { aiApi } from "../../shared/api/services"
+import { aiApi, productApi } from "../../shared/api/services"
+import { EmptyState, ErrorBanner, LoadingState, MetricCard, formatCurrency } from "../../shared/components/ui"
 import { PRODUCT_PLACEHOLDER_IMAGE } from "../../shared/constants/media"
 import { useSessionStore } from "../../shared/stores/sessionStore"
 import { getApiErrorMessage } from "../../shared/utils/apiError"
 
 export function HomePage() {
-  const { customerToken, customerUsername, customerId, cartSessionKey } = useSessionStore()
+  const { customerUsername, customerId, cartSessionKey } = useSessionStore()
+
+  const productsQuery = useQuery({
+    queryKey: ["products", "home"],
+    queryFn: () => productApi.list({ in_stock: true }),
+  })
 
   const recommendHomeQuery = useQuery({
     queryKey: ["ai", "recommend-home", customerId ?? "guest", cartSessionKey ?? "none"],
@@ -22,46 +28,80 @@ export function HomePage() {
     },
   })
 
+  const products = productsQuery.data ?? []
+  const featured = products.slice(0, 6)
+  const categories = Array.from(new Set(products.map((product) => product.category_id).filter(Boolean))).slice(0, 5)
+
   return (
-    <section className="panel">
-      <h1>Commerce Frontend</h1>
-      <p>
-        Core Phase B flow is live: customer auth, products, cart, and order creation through gateway-backed
-        APIs.
-      </p>
-      <div className="status-grid">
-        <div className="status-item">
-          <strong>Auth</strong>
-          <span>{customerToken ? `Logged in as ${customerUsername ?? "customer"}` : "Guest mode"}</span>
+    <div className="page-stack">
+      <section className="home-hero">
+        <div className="hero-copy">
+          <span className="eyebrow">AI assisted shopping</span>
+          <h1>Find the right product faster.</h1>
+          <p>
+            Browse curated electronics, accessories, and lifestyle products with recommendations tuned to your
+            recent shopping intent.
+          </p>
+          <div className="hero-actions">
+            <Link className="btn btn-primary" to="/products">
+              Browse products
+            </Link>
+            <Link className="btn btn-secondary" to="/assistant">
+              Ask assistant
+            </Link>
+          </div>
         </div>
-        <div className="status-item">
-          <strong>Customer ID Scope</strong>
-          <span>{customerId ?? "Not set"}</span>
+        <div className="hero-summary">
+          <MetricCard label="Welcome" value={customerUsername ?? "Guest"} hint="Personalized when signed in" />
+          <MetricCard label="Available products" value={products.length} hint="Loaded from catalog service" />
+          <MetricCard label="Live recommendations" value={recommendHomeQuery.data?.items.length ?? 0} hint="AI ranked" />
         </div>
-        <div className="status-item">
-          <strong>Cart Session</strong>
-          <span>{cartSessionKey ?? "Will be created on first cart call"}</span>
-        </div>
-      </div>
-      <div className="quick-links">
-        <Link to="/auth/login">Login</Link>
-        <Link to="/auth/register">Register</Link>
-        <Link to="/products">Browse Products</Link>
-        <Link to="/cart">Open Cart</Link>
-        <Link to="/orders">View Orders</Link>
-        <Link to="/profile">Profile</Link>
-      </div>
+      </section>
 
-      <section className="ai-section">
-        <h2>AI Home Recommendations</h2>
-        {recommendHomeQuery.isLoading ? <p>Loading recommendations...</p> : null}
-        {recommendHomeQuery.isError ? (
-          <p className="error-text">{getApiErrorMessage(recommendHomeQuery.error)}</p>
-        ) : null}
+      <section className="section-panel">
+        <div className="section-title-row">
+          <div>
+            <span className="eyebrow">Categories</span>
+            <h2>Shop by collection</h2>
+          </div>
+          <Link to="/products">View catalog</Link>
+        </div>
+        <div className="category-strip">
+          {categories.length > 0 ? (
+            categories.map((categoryId) => (
+              <Link key={categoryId} className="category-pill" to={`/products?category=${categoryId}`}>
+                Category {categoryId}
+              </Link>
+            ))
+          ) : (
+            <>
+              <Link className="category-pill" to="/products">
+                Laptops
+              </Link>
+              <Link className="category-pill" to="/products">
+                Accessories
+              </Link>
+              <Link className="category-pill" to="/products">
+                Audio
+              </Link>
+            </>
+          )}
+        </div>
+      </section>
+
+      <section className="section-panel">
+        <div className="section-title-row">
+          <div>
+            <span className="eyebrow">Recommended</span>
+            <h2>Picked for this session</h2>
+          </div>
+          <Link to="/products">Explore more</Link>
+        </div>
+        {recommendHomeQuery.isLoading ? <LoadingState label="Loading recommendations..." /> : null}
+        {recommendHomeQuery.isError ? <ErrorBanner message={getApiErrorMessage(recommendHomeQuery.error)} /> : null}
         {recommendHomeQuery.data && recommendHomeQuery.data.items.length === 0 ? (
-          <p>No recommendations yet.</p>
+          <EmptyState title="No recommendations yet" description="Browse a few products to shape your session." />
         ) : null}
-
         {recommendHomeQuery.data && recommendHomeQuery.data.items.length > 0 ? (
           <div className="product-grid">
             {recommendHomeQuery.data.items.map((item) => (
@@ -70,25 +110,64 @@ export function HomePage() {
                   className="product-card-image"
                   src={item.product.image_urls?.[0] || PRODUCT_PLACEHOLDER_IMAGE}
                   alt={item.product.name}
-                  loading="lazy"
                   onError={(event) => {
                     event.currentTarget.src = PRODUCT_PLACEHOLDER_IMAGE
                   }}
                 />
-                <h3>{item.product.name}</h3>
-                <p>{item.product.short_description || "Recommended for you"}</p>
+                <div>
+                  <h3>{item.product.name}</h3>
+                  <p>{item.product.short_description || "Recommended product"}</p>
+                </div>
                 <div className="product-meta">
-                  <span>${item.product.base_price}</span>
+                  <span>{formatCurrency(item.product.base_price)}</span>
                   <span>Score {item.score.toFixed(2)}</span>
                 </div>
-                <div className="row-actions">
-                  <Link to={`/products/${item.product.id}`}>Open Product</Link>
-                </div>
+                <Link className="btn btn-secondary" to={`/products/${item.product.id}`}>
+                  View product
+                </Link>
               </article>
             ))}
           </div>
         ) : null}
       </section>
-    </section>
+
+      <section className="section-panel">
+        <div className="section-title-row">
+          <div>
+            <span className="eyebrow">Popular</span>
+            <h2>Ready to ship</h2>
+          </div>
+        </div>
+        {productsQuery.isLoading ? <LoadingState label="Loading products..." /> : null}
+        {productsQuery.isError ? <ErrorBanner message={getApiErrorMessage(productsQuery.error)} /> : null}
+        {featured.length > 0 ? (
+          <div className="product-grid compact">
+            {featured.map((product) => (
+              <article className="product-card" key={product.id}>
+                <img
+                  className="product-card-image"
+                  src={product.image_urls[0] || PRODUCT_PLACEHOLDER_IMAGE}
+                  alt={product.name}
+                  onError={(event) => {
+                    event.currentTarget.src = PRODUCT_PLACEHOLDER_IMAGE
+                  }}
+                />
+                <div>
+                  <h3>{product.name}</h3>
+                  <p>{product.short_description || product.description || "Available now"}</p>
+                </div>
+                <div className="product-meta">
+                  <span>{formatCurrency(product.base_price)}</span>
+                  <span>{product.stock} in stock</span>
+                </div>
+                <Link className="btn btn-secondary" to={`/products/${product.id}`}>
+                  View product
+                </Link>
+              </article>
+            ))}
+          </div>
+        ) : null}
+      </section>
+    </div>
   )
 }

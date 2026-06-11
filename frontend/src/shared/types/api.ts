@@ -22,6 +22,21 @@ export type CustomerLoginResponse = {
   customer: CustomerProfile
 }
 
+export type StaffProfile = {
+  id: number
+  user: UserSummary
+  name: string
+  phone: string
+  position: string
+  created_at: string
+  updated_at: string
+}
+
+export type StaffLoginResponse = {
+  token: string
+  staff: StaffProfile
+}
+
 export type CustomerRegisterPayload = {
   username: string
   password: string
@@ -145,6 +160,8 @@ export type CreatePaymentPayload = {
   session_key?: string
   currency?: string
   provider?: string
+  method_type?: string
+  masked_account?: string
   idempotency_key?: string
 }
 
@@ -208,6 +225,29 @@ export type AiRecommendationItem = {
 export type AiRecommendResponse = {
   context: Record<string, unknown>
   items: AiRecommendationItem[]
+}
+
+export type AiModelStatus = {
+  recommendation_limit_default?: number
+  recommendation_limit_max?: number
+  deep_model?: {
+    enabled: boolean
+    loaded: boolean
+    model_version: string
+    artifact_dir: string
+    alpha: number
+    fallback_mode: string
+    error?: string | null
+  }
+  [key: string]: unknown
+}
+
+export type InteractionGraphStatus = {
+  enabled: boolean
+  connected?: boolean
+  graph_sync_on_write?: boolean
+  node_counts?: Record<string, number>
+  relationship_counts?: Record<string, number>
 }
 
 export type AiChatSource = {

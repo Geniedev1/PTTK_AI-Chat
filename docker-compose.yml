@@ -422,9 +422,13 @@ services:
       INTERNAL_ADMIN_KEY: ${INTERNAL_ADMIN_KEY:-change-this-in-dev}
       ALLOWED_HOSTS: "*"
       REQUEST_TIMEOUT_SECONDS: 10
+      AI_PROVIDER: ${AI_PROVIDER:-gemini}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_CHAT_MODEL: ${OPENAI_CHAT_MODEL:-gpt-5-mini}
       OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
+      OPENAI_ENABLE_EMBEDDINGS: ${OPENAI_ENABLE_EMBEDDINGS:-false}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_CHAT_MODEL: ${GEMINI_CHAT_MODEL:-gemini-flash-lite-latest}
     ports:
       - "8007:8007"
     depends_on:

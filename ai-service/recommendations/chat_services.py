@@ -206,14 +206,24 @@ class InteractionContextClient:
 
 class OpenAIClient:
     def __init__(self):
+        self.provider = getattr(settings, "AI_PROVIDER", "openai").strip().lower()
         self.base_url = getattr(settings, "OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
         self.api_key = getattr(settings, "OPENAI_API_KEY", "")
         self.chat_model = getattr(settings, "OPENAI_CHAT_MODEL", "gpt-4o-mini")
         self.embedding_model = getattr(settings, "OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
+        self.gemini_base_url = getattr(
+            settings,
+            "GEMINI_BASE_URL",
+            "https://generativelanguage.googleapis.com/v1beta",
+        ).rstrip("/")
+        self.gemini_api_key = getattr(settings, "GEMINI_API_KEY", "")
+        self.gemini_chat_model = getattr(settings, "GEMINI_CHAT_MODEL", "gemini-flash-lite-latest")
         self.timeout = getattr(settings, "REQUEST_TIMEOUT_SECONDS", 10)
 
     @property
     def enabled(self):
+        if self.provider == "gemini":
+            return bool(self.gemini_api_key)
         return bool(self.api_key)
 
     def _headers(self):
@@ -225,6 +235,9 @@ class OpenAIClient:
     def generate_answer(self, *, prompt, question):
         if not self.enabled:
             return None
+        if self.provider == "gemini":
+            return self._generate_gemini_answer(prompt=prompt, question=question)
+
         payload = {
             "model": self.chat_model,
             "messages": [
@@ -254,7 +267,45 @@ class OpenAIClient:
             return content.strip() or None
         return None
 
+    def _generate_gemini_answer(self, *, prompt, question):
+        payload = {
+            "system_instruction": {
+                "parts": [{"text": prompt}],
+            },
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [{"text": question}],
+                }
+            ],
+            "generationConfig": {
+                "maxOutputTokens": 1024,
+                "temperature": 0.7,
+            },
+        }
+        try:
+            response = requests.post(
+                f"{self.gemini_base_url}/models/{self.gemini_chat_model}:generateContent",
+                params={"key": self.gemini_api_key},
+                json=payload,
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            logger.warning("Gemini generateContent request failed: %s", exc)
+            return None
+
+        data = response.json()
+        candidates = data.get("candidates") or []
+        if not candidates:
+            return None
+        parts = ((candidates[0].get("content") or {}).get("parts") or [])
+        text = "\n".join(part.get("text", "") for part in parts if part.get("text"))
+        return text.strip() or None
+
     def embed_texts(self, texts):
+        if self.provider == "gemini":
+            return None
         if not self.enabled or not getattr(settings, "OPENAI_ENABLE_EMBEDDINGS", True) or not texts:
             return None
         payload = {

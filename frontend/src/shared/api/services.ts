@@ -1,6 +1,7 @@
 import { endpoints } from "../constants/endpoints"
 import type {
   AiChatResponse,
+  AiModelStatus,
   AiRecommendResponse,
   CartItem,
   CartSummary,
@@ -15,11 +16,19 @@ import type {
   Payment,
   Product,
   Shipment,
+  StaffLoginResponse,
+  InteractionGraphStatus,
 } from "../types/api"
 import { httpClient } from "./httpClient"
 
 type ListProductsParams = {
   search?: string
+  category_id?: number
+  in_stock?: boolean
+  min_price?: string
+  max_price?: string
+  sort_by?: string
+  tag?: string
 }
 
 const withOptionalCustomerScope = (customerId?: number | null) =>
@@ -49,9 +58,37 @@ export const customerApi = {
   },
 }
 
+export const staffApi = {
+  login: async (payload: { username: string; password: string }): Promise<StaffLoginResponse> => {
+    const { data } = await httpClient.post<StaffLoginResponse>(endpoints.staff.login, payload)
+    return data
+  },
+}
+
 export const productApi = {
   list: async (params?: ListProductsParams): Promise<Product[]> => {
-    const query = params?.search?.trim() ? { search: params.search.trim() } : undefined
+    const query: Record<string, string | number | boolean> = {}
+    if (params?.search?.trim()) {
+      query.search = params.search.trim()
+    }
+    if (params?.category_id) {
+      query.category_id = params.category_id
+    }
+    if (params?.in_stock !== undefined) {
+      query.in_stock = params.in_stock ? "true" : "false"
+    }
+    if (params?.min_price) {
+      query.min_price = params.min_price
+    }
+    if (params?.max_price) {
+      query.max_price = params.max_price
+    }
+    if (params?.sort_by) {
+      query.sort_by = params.sort_by
+    }
+    if (params?.tag) {
+      query.tag = params.tag
+    }
     const { data } = await httpClient.get<Product[]>(endpoints.products.list, { params: query })
     return data
   },
@@ -101,6 +138,10 @@ export const orderApi = {
   },
   create: async (payload: { customer_id?: number; clear_cart?: boolean }): Promise<CreateOrderResponse> => {
     const { data } = await httpClient.post<CreateOrderResponse>(endpoints.orders.create, payload)
+    return data
+  },
+  updateStatus: async (orderId: number, status: string): Promise<Order> => {
+    const { data } = await httpClient.post<Order>(endpoints.orders.updateStatus(orderId), { status })
     return data
   },
 }
@@ -207,6 +248,41 @@ export const aiApi = {
     order_id?: number
   }): Promise<AiChatResponse> => {
     const { data } = await httpClient.post<AiChatResponse>(endpoints.ai.chat, payload)
+    return data
+  },
+  modelStatus: async (): Promise<AiModelStatus> => {
+    const { data } = await httpClient.get<AiModelStatus>(endpoints.ai.modelStatus)
+    return data
+  },
+  profileSnapshot: async (params: { user_id?: number; session_id?: string }): Promise<Record<string, unknown>> => {
+    const { data } = await httpClient.get<Record<string, unknown>>(endpoints.ai.profileSnapshot, { params })
+    return data
+  },
+}
+
+export const interactionApi = {
+  events: async (params?: Record<string, string | number>): Promise<Record<string, unknown>[]> => {
+    const { data } = await httpClient.get<Record<string, unknown>[]>(endpoints.interactions.events, { params })
+    return data
+  },
+  productGaps: async (): Promise<Record<string, unknown>[]> => {
+    const { data } = await httpClient.get<Record<string, unknown>[]>(endpoints.interactions.productGaps)
+    return data
+  },
+  topQueries: async (): Promise<Record<string, unknown>[]> => {
+    const { data } = await httpClient.get<Record<string, unknown>[]>(endpoints.interactions.topQueries)
+    return data
+  },
+  categoryInterest: async (): Promise<Record<string, unknown>[]> => {
+    const { data } = await httpClient.get<Record<string, unknown>[]>(endpoints.interactions.categoryInterest)
+    return data
+  },
+  graphStatus: async (): Promise<InteractionGraphStatus> => {
+    const { data } = await httpClient.get<InteractionGraphStatus>(endpoints.interactions.graphStatus)
+    return data
+  },
+  graphRebuild: async (): Promise<Record<string, unknown>> => {
+    const { data } = await httpClient.post<Record<string, unknown>>(endpoints.interactions.graphRebuild)
     return data
   },
 }
