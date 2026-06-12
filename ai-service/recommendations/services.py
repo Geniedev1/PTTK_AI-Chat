@@ -1,0 +1,896 @@
+import logging
+from collections import Counter
+from copy import deepcopy
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation
+
+import requests
+from django.conf import settings
+
+from .deep_model_inference import DeepModelRuntime
+from .profile_utils import BehavioralProfileBuilder
+
+logger = logging.getLogger(__name__)
+
+
+def _parse_iso_timestamp(value):
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+class ServiceClientError(Exception):
+    def __init__(self, message, status_code=502):
+        super().__init__(message)
+        self.status_code = status_code
+
+
+class ProductCatalogClient:
+    def __init__(self):
+        self.base_url = getattr(settings, "PRODUCT_SERVICE_URL", "").rstrip("/")
+        self.timeout = getattr(settings, "REQUEST_TIMEOUT_SECONDS", 10)
+
+    def _get(self, path, params=None):
+        if not self.base_url:
+            raise ServiceClientError("PRODUCT_SERVICE_URL is not configured.")
+        try:
+            response = requests.get(
+                f"{self.base_url}{path}",
+                params=params or {},
+                timeout=self.timeout,
+            )
+        except requests.RequestException as exc:
+            raise ServiceClientError(f"Product service request failed: {exc}") from exc
+        if response.status_code >= 400:
+            raise ServiceClientError("Product service returned an error.", status_code=response.status_code)
+        return response.json()
+
+    def fetch_products(self):
+        return self._get("/api/products/")
+
+    def fetch_product(self, product_id):
+        return self._get(f"/api/products/{int(product_id)}/")
+
+
+class InteractionAnalyticsClient:
+    def __init__(self):
+        self.base_url = getattr(settings, "INTERACTION_SERVICE_URL", "").rstrip("/")
+        self.timeout = getattr(settings, "REQUEST_TIMEOUT_SECONDS", 10)
+
+    def _get_optional(self, path, params=None, default=None):
+        if not self.base_url:
+            return [] if default is None else default
+        try:
+            response = requests.get(
+                f"{self.base_url}{path}",
+                params=params or {},
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            logger.warning("Interaction service request failed for %s: %s", path, exc)
+            return [] if default is None else default
+        return response.json()
+
+    def fetch_events(self, *, user_id=None, session_id=None, limit=25):
+        params = {"limit": limit}
+        if user_id is not None:
+            params["user_id"] = int(user_id)
+        if session_id:
+            params["session_id"] = session_id
+        return self._get_optional("/api/interactions/events", params=params, default=[])
+
+    def fetch_all_events(self, *, limit=200, date_from=None, date_to=None):
+        target = max(1, int(limit))
+        page_limit = min(target, 200)
+        collected = []
+        seen_event_ids = set()
+        cursor_date_to = date_to
+        max_pages = max(3, (target // max(1, page_limit)) + 5)
+
+        for _ in range(max_pages):
+            params = {"limit": page_limit}
+            if date_from:
+                params["date_from"] = date_from
+            if cursor_date_to:
+                params["date_to"] = cursor_date_to
+
+            page = self._get_optional("/api/interactions/events", params=params, default=[])
+            if not page:
+                break
+
+            added_in_page = 0
+            for event in page:
+                event_id = event.get("id")
+                if event_id is not None and event_id in seen_event_ids:
+                    continue
+                if event_id is not None:
+                    seen_event_ids.add(event_id)
+                collected.append(event)
+                added_in_page += 1
+                if len(collected) >= target:
+                    return collected[:target]
+
+            # No progress means we cannot page further with current API constraints.
+            if added_in_page == 0:
+                break
+
+            oldest_ts = None
+            for event in page:
+                parsed_ts = _parse_iso_timestamp(event.get("timestamp"))
+                if parsed_ts is None:
+                    continue
+                if oldest_ts is None or parsed_ts < oldest_ts:
+                    oldest_ts = parsed_ts
+            if oldest_ts is None:
+                break
+
+            cursor_date_to = (oldest_ts - timedelta(microseconds=1)).isoformat().replace("+00:00", "Z")
+
+            if len(page) < page_limit:
+                break
+
+        return collected[:target]
+
+    def fetch_product_gaps(self):
+        return self._get_optional("/api/interactions/events/product_gaps", default=[])
+
+    def fetch_user_interest(self, *, user_id=None, session_id=None, limit=5):
+        params = {"limit": limit}
+        if user_id is not None:
+            params["user_id"] = int(user_id)
+        elif session_id:
+            params["session_id"] = session_id
+        else:
+            return []
+        return self._get_optional("/api/interactions/graph/user_interest", params=params, default=[])
+
+    def fetch_product_neighbors(self, *, product_id, limit=6):
+        return self._get_optional(
+            "/api/interactions/graph/product_neighbors",
+            params={"product_id": int(product_id), "limit": limit},
+            default=[],
+        )
+
+    def fetch_similar_users(self, *, user_id=None, session_id=None, limit=3):
+        params = {"limit": limit}
+        if user_id is not None:
+            params["user_id"] = int(user_id)
+        elif session_id:
+            params["session_id"] = session_id
+        else:
+            return []
+        return self._get_optional("/api/interactions/graph/similar_users", params=params, default=[])
+
+
+class CartClient:
+    def __init__(self):
+        self.base_url = getattr(settings, "CART_SERVICE_URL", "").rstrip("/")
+        self.timeout = getattr(settings, "REQUEST_TIMEOUT_SECONDS", 10)
+
+    def fetch_current_cart(self, session_id):
+        if not self.base_url:
+            raise ServiceClientError("CART_SERVICE_URL is not configured.")
+        try:
+            response = requests.get(
+                f"{self.base_url}/api/cart/current",
+                headers={"X-Cart-Session-Key": str(session_id)},
+                timeout=self.timeout,
+            )
+        except requests.RequestException as exc:
+            raise ServiceClientError(f"Cart service request failed: {exc}") from exc
+        if response.status_code >= 400:
+            raise ServiceClientError("Cart service returned an error.", status_code=response.status_code)
+        return response.json()
+
+
+class RecommendationService:
+    def __init__(
+        self,
+        product_client=None,
+        interaction_client=None,
+        cart_client=None,
+        profile_builder=None,
+        deep_model_runtime=None,
+    ):
+        self.product_client = product_client or ProductCatalogClient()
+        self.interaction_client = interaction_client or InteractionAnalyticsClient()
+        self.cart_client = cart_client or CartClient()
+        self.profile_builder = profile_builder or BehavioralProfileBuilder(
+            interaction_client=self.interaction_client,
+            cart_client=self.cart_client,
+        )
+        self.deep_model_runtime = deep_model_runtime or DeepModelRuntime()
+
+    def recommend_home(self, *, user_id=None, session_id=None, limit=10):
+        products = self._load_products()
+        score_cards = self._empty_score_cards(products)
+        self._apply_popularity(score_cards, self.interaction_client.fetch_product_gaps())
+
+        actor_context = self._build_actor_context(products, user_id=user_id, session_id=session_id)
+        self._apply_actor_context(score_cards, products, actor_context)
+        deep_model_meta = self._apply_deep_model_scores(score_cards, products, actor_context)
+
+        items = self._rank(products, score_cards, limit=limit)
+        return {
+            "context": {
+                "strategy": "home",
+                "user_id": user_id,
+                "session_id": session_id,
+                "recent_product_ids": actor_context["recent_product_ids"],
+                "profile_snapshot": actor_context["profile_snapshot"],
+                "deep_model": deep_model_meta,
+            },
+            "items": items,
+        }
+
+    def recommend_product_detail(self, *, product_id, user_id=None, session_id=None, limit=10):
+        products = self._load_products()
+        if product_id not in products:
+            current_product = self.product_client.fetch_product(product_id)
+            if not current_product.get("is_active", False):
+                raise ServiceClientError("Product is not available.", status_code=404)
+            products[int(product_id)] = current_product
+
+        current_product = products[int(product_id)]
+        score_cards = self._empty_score_cards(products)
+        self._apply_popularity(score_cards, self.interaction_client.fetch_product_gaps())
+        self._apply_product_context(score_cards, products, current_product)
+        self._apply_graph_neighbors(score_cards, [int(product_id)])
+
+        actor_context = self._build_actor_context(products, user_id=user_id, session_id=session_id)
+        self._apply_actor_context(score_cards, products, actor_context)
+        deep_model_meta = self._apply_deep_model_scores(score_cards, products, actor_context)
+
+        items = self._rank(products, score_cards, limit=limit, exclude_ids={int(product_id)})
+        return {
+            "context": {
+                "strategy": "product-detail",
+                "product_id": int(product_id),
+                "user_id": user_id,
+                "session_id": session_id,
+                "profile_snapshot": actor_context["profile_snapshot"],
+                "deep_model": deep_model_meta,
+            },
+            "items": items,
+        }
+
+    def recommend_cart(self, *, session_id, user_id=None, limit=10):
+        cart_payload = self.cart_client.fetch_current_cart(session_id)
+        cart_items = cart_payload.get("items", [])
+        cart_product_ids = [int(item["product_id"]) for item in cart_items if item.get("product_id") is not None]
+        if not cart_product_ids:
+            response = self.recommend_home(user_id=user_id, session_id=session_id, limit=limit)
+            response["context"]["strategy"] = "cart-fallback-home"
+            response["context"]["cart_product_ids"] = []
+            return response
+
+        products = self._load_products()
+        score_cards = self._empty_score_cards(products)
+        self._apply_popularity(score_cards, self.interaction_client.fetch_product_gaps())
+
+        for cart_product_id in cart_product_ids:
+            product = products.get(cart_product_id)
+            if product:
+                self._apply_product_context(score_cards, products, product)
+        self._apply_graph_neighbors(score_cards, cart_product_ids, reason_code="cart_graph_neighbor", source_key="cart_graph")
+
+        actor_context = self._build_actor_context(
+            products,
+            user_id=user_id,
+            session_id=session_id,
+            cart_payload=cart_payload,
+        )
+        self._apply_actor_context(score_cards, products, actor_context)
+        deep_model_meta = self._apply_deep_model_scores(score_cards, products, actor_context)
+
+        items = self._rank(products, score_cards, limit=limit, exclude_ids=set(cart_product_ids))
+        return {
+            "context": {
+                "strategy": "cart",
+                "session_id": session_id,
+                "user_id": user_id,
+                "cart_product_ids": cart_product_ids,
+                "profile_snapshot": actor_context["profile_snapshot"],
+                "deep_model": deep_model_meta,
+            },
+            "items": items,
+        }
+
+    def get_profile_snapshot(self, *, user_id=None, session_id=None):
+        products = self._load_products()
+        actor_context = self._build_actor_context(products, user_id=user_id, session_id=session_id)
+        return {
+            "user_id": user_id,
+            "session_id": session_id,
+            "profile_snapshot": actor_context["profile_snapshot"],
+        }
+
+    def get_model_status(self):
+        status_payload = self.profile_builder.status()
+        deep_model_status = self.deep_model_runtime.status()
+        fallbacks = dict(status_payload.get("fallbacks", {}))
+        fallbacks["deep_model_unavailable"] = "heuristic-only"
+        status_payload["fallbacks"] = fallbacks
+        status_payload["deep_model"] = deep_model_status
+        if deep_model_status.get("enabled") and deep_model_status.get("loaded"):
+            status_payload["scoring_mode"] = "hybrid-deep-heuristic"
+        else:
+            status_payload["scoring_mode"] = "behavioral-heuristic"
+        status_payload["runtime"] = {
+            "recommendation_limit_default": getattr(settings, "RECOMMENDATION_LIMIT_DEFAULT", 10),
+            "recommendation_limit_max": getattr(settings, "RECOMMENDATION_LIMIT_MAX", 20),
+            "request_timeout_seconds": getattr(settings, "REQUEST_TIMEOUT_SECONDS", 10),
+            "deep_model_alpha": float(getattr(self.deep_model_runtime, "alpha", 0.0)),
+        }
+        return status_payload
+
+    def _load_products(self):
+        raw_products = self.product_client.fetch_products()
+        products = {}
+        for product in raw_products:
+            if not product.get("is_active", False):
+                continue
+            products[int(product["id"])] = deepcopy(product)
+        return products
+
+    def _empty_score_cards(self, products):
+        return {
+            product_id: {
+                "score": 0.0,
+                "reason_codes": set(),
+                "source_signals": {},
+                "deep_model_score": None,
+                "deep_model_bonus": 0.0,
+            }
+            for product_id in products
+        }
+
+    def _build_actor_context(self, products, *, user_id=None, session_id=None, cart_payload=None):
+        if user_id is None and not session_id:
+            return {
+                "interest_rows": [],
+                "similar_users": [],
+                "category_counter": Counter(),
+                "brand_counter": Counter(),
+                "price_points": [],
+                "events": [],
+                "event_counts": Counter(),
+                "actor_key": None,
+                "scope_type": "anonymous",
+                "recent_product_ids": [],
+                "profile_snapshot": self.profile_builder.empty(),
+                "scope_is_user": False,
+            }
+
+        events = self.interaction_client.fetch_events(user_id=user_id, session_id=session_id, limit=20)
+        recent_product_ids = []
+        seen_product_ids = set()
+        category_counter = Counter()
+        brand_counter = Counter()
+        price_points = []
+
+        for event in events:
+            product_id = self._normalize_product_id(event.get("product_id"))
+            if product_id in products:
+                product = products[product_id]
+                signal_weight = max(float(event.get("signal_weight", 1) or 1), 1.0)
+                category_id = product.get("category_id")
+                brand_id = product.get("brand_id")
+                if category_id is not None:
+                    category_counter[int(category_id)] += signal_weight
+                if brand_id is not None:
+                    brand_counter[int(brand_id)] += signal_weight
+                price = self._to_decimal(product.get("base_price"))
+                if price is not None:
+                    price_points.append(price)
+                if product_id not in seen_product_ids:
+                    recent_product_ids.append(int(product_id))
+                    seen_product_ids.add(int(product_id))
+
+        interest_rows = self.interaction_client.fetch_user_interest(user_id=user_id, session_id=session_id, limit=5)
+        profile_snapshot = self.profile_builder.build(
+            products,
+            user_id=user_id,
+            session_id=session_id,
+            cart_payload=cart_payload,
+        )
+        return {
+            "interest_rows": interest_rows,
+            "similar_users": self.interaction_client.fetch_similar_users(user_id=user_id, session_id=session_id, limit=3),
+            "category_counter": category_counter,
+            "brand_counter": brand_counter,
+            "price_points": price_points,
+            "events": events,
+            "event_counts": Counter(row.get("event_type") for row in events),
+            "actor_key": self._actor_key(user_id=user_id, session_id=session_id),
+            "scope_type": "user" if user_id is not None else "session",
+            "recent_product_ids": recent_product_ids,
+            "profile_snapshot": profile_snapshot,
+            "scope_is_user": user_id is not None,
+        }
+
+    def _apply_deep_model_scores(self, score_cards, products, actor_context):
+        feature_rows = []
+        product_ids = []
+        for product_id, product in products.items():
+            if product_id not in score_cards:
+                continue
+            feature_rows.append(
+                self._build_deep_feature_row(
+                    product_id=product_id,
+                    product=product,
+                    score_cards=score_cards,
+                    actor_context=actor_context,
+                )
+            )
+            product_ids.append(product_id)
+
+        inference = self.deep_model_runtime.score_candidates(feature_rows)
+        alpha = float(getattr(self.deep_model_runtime, "alpha", 0.0))
+        if not inference.get("applied"):
+            return {
+                "enabled": bool(self.deep_model_runtime.status().get("enabled")),
+                "loaded": bool(self.deep_model_runtime.status().get("loaded")),
+                "applied": False,
+                "alpha": alpha,
+                "model_version": inference.get("model_version"),
+                "fallback_mode": inference.get("fallback_mode"),
+                "error": inference.get("error"),
+            }
+
+        scores = inference.get("scores") or []
+        for idx, product_id in enumerate(product_ids):
+            if idx >= len(scores):
+                break
+            deep_score = float(scores[idx])
+            deep_bonus = alpha * deep_score
+            card = score_cards.get(product_id)
+            if card is None:
+                continue
+            card["deep_model_score"] = deep_score
+            card["deep_model_bonus"] = deep_bonus
+            self._add_score(score_cards, product_id, deep_bonus, "deep_model", "deep_model_bonus")
+            card["source_signals"]["deep_model_score"] = deep_score
+
+        return {
+            "enabled": True,
+            "loaded": True,
+            "applied": True,
+            "alpha": alpha,
+            "model_version": inference.get("model_version"),
+            "fallback_mode": inference.get("fallback_mode", "deep-model"),
+            "error": None,
+        }
+
+    def _build_deep_feature_row(self, *, product_id, product, score_cards, actor_context):
+        profile_snapshot = actor_context.get("profile_snapshot") or {}
+        events = actor_context.get("events") or []
+        actor_item_events = [
+            row
+            for row in events
+            if self._normalize_product_id(row.get("product_id")) == int(product_id)
+        ]
+
+        top_categories = profile_snapshot.get("top_categories") or []
+        top_brands = profile_snapshot.get("top_brands") or []
+        top_category_id = top_categories[0].get("category_id") if top_categories else None
+        top_brand_id = top_brands[0].get("brand_id") if top_brands else None
+
+        card = score_cards.get(product_id) or {"source_signals": {}}
+        source_signals = card.get("source_signals") or {}
+        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+        def _count_events(event_types):
+            return int(sum(1 for row in events if row.get("event_type") in event_types))
+
+        def _count_item_events(event_types):
+            return int(sum(1 for row in actor_item_events if row.get("event_type") in event_types))
+
+        total_events = int(len(events))
+        return {
+            "sample_id": "%s|%s|%s" % (actor_context.get("actor_key") or "anonymous", product_id, now),
+            "actor_key": actor_context.get("actor_key") or "anonymous",
+            "scope_type": actor_context.get("scope_type") or "anonymous",
+            "product_id": int(product_id),
+            "snapshot_time": now,
+            "feature_cutoff_time": now,
+            "item_category_id": product.get("category_id"),
+            "item_brand_id": product.get("brand_id"),
+            "item_product_type_id": product.get("product_type_id"),
+            "item_price_band": self._price_band(product.get("base_price")),
+            "item_has_stock": int(bool(product.get("has_stock", False))),
+            "item_is_active": int(bool(product.get("is_active", False))),
+            "actor_top_category_id": top_category_id,
+            "actor_top_brand_id": top_brand_id,
+            "actor_purchase_intent_pre": float(profile_snapshot.get("purchase_intent_score", 0.0) or 0.0),
+            "actor_event_count_1d": total_events,
+            "actor_event_count_7d": total_events,
+            "actor_event_count_30d": total_events,
+            "actor_view_count_7d": _count_events({"product_viewed"}),
+            "actor_click_count_7d": _count_events({"product_clicked"}),
+            "actor_cart_count_7d": _count_events({"cart_item_added", "cart_item_quantity_updated"}),
+            "actor_purchase_count_30d": _count_events({"order_paid", "order_completed"}),
+            "actor_item_event_count_30d": int(len(actor_item_events)),
+            "item_popularity_pre": float(source_signals.get("popularity", 0.0) or 0.0),
+            "interaction_overlap_pre": _count_item_events(
+                {
+                    "product_viewed",
+                    "product_clicked",
+                    "cart_item_added",
+                    "order_paid",
+                    "order_completed",
+                }
+            ),
+            "graph_neighbor_score_pre": float(
+                (source_signals.get("graph_neighbor", 0.0) or 0.0)
+                + (source_signals.get("cart_graph", 0.0) or 0.0)
+            ),
+            "binary_label": 0,
+        }
+
+    def _apply_actor_context(self, score_cards, products, actor_context):
+        self._apply_interest_rows(score_cards, products, actor_context["interest_rows"])
+        self._apply_recent_affinity(
+            score_cards,
+            products,
+            category_counter=actor_context["category_counter"],
+            brand_counter=actor_context["brand_counter"],
+            price_points=actor_context["price_points"],
+        )
+        self._apply_graph_neighbors(score_cards, actor_context["recent_product_ids"])
+        self._apply_similar_user_products(
+            score_cards,
+            products,
+            actor_context["similar_users"],
+            scope_is_user=actor_context["scope_is_user"],
+        )
+        self._apply_behavioral_profile_bias(score_cards, products, actor_context["profile_snapshot"])
+        self._apply_recent_product_bias(score_cards, products, actor_context["profile_snapshot"])
+
+    def _apply_popularity(self, score_cards, product_gaps):
+        for row in product_gaps:
+            product_id = row.get("product_id")
+            if product_id not in score_cards:
+                continue
+            score = (
+                float(row.get("viewed_count", 0)) * 0.4
+                + float(row.get("cart_added_count", 0)) * 1.2
+                + float(row.get("paid_count", 0)) * 2.4
+            )
+            self._add_score(score_cards, product_id, score, "popular", "popularity")
+
+    def _apply_interest_rows(self, score_cards, products, interest_rows):
+        for row in interest_rows:
+            category_id = row.get("category_id")
+            if category_id is None:
+                continue
+            bonus = min(float(row.get("total_weight", 0)) * 0.35, 5.0)
+            for product_id, product in products.items():
+                if product.get("category_id") == category_id:
+                    self._add_score(
+                        score_cards,
+                        product_id,
+                        bonus,
+                        "recent_interest_category",
+                        "category_interest",
+                    )
+
+    def _apply_recent_affinity(self, score_cards, products, *, category_counter, brand_counter, price_points):
+        median_price = None
+        if price_points:
+            sorted_prices = sorted(price_points)
+            median_price = sorted_prices[len(sorted_prices) // 2]
+
+        for product_id, product in products.items():
+            category_id = product.get("category_id")
+            brand_id = product.get("brand_id")
+            if category_id in category_counter:
+                self._add_score(
+                    score_cards,
+                    product_id,
+                    min(category_counter[category_id] * 0.25, 3.5),
+                    "recent_interest_category",
+                    "recent_category",
+                )
+            if brand_id in brand_counter:
+                self._add_score(
+                    score_cards,
+                    product_id,
+                    min(brand_counter[brand_id] * 0.2, 2.0),
+                    "recent_interest_brand",
+                    "recent_brand",
+                )
+            if median_price is not None:
+                price = self._to_decimal(product.get("base_price"))
+                if price is not None and self._is_within_band(price, median_price, 0.25):
+                    self._add_score(
+                        score_cards,
+                        product_id,
+                        0.9,
+                        "price_band_match",
+                        "price_affinity",
+                    )
+
+    def _apply_product_context(self, score_cards, products, seed_product):
+        seed_id = int(seed_product["id"])
+        seed_category = seed_product.get("category_id")
+        seed_brand = seed_product.get("brand_id")
+        seed_price = self._to_decimal(seed_product.get("base_price"))
+
+        for product_id, product in products.items():
+            if product_id == seed_id:
+                continue
+            if seed_category is not None and product.get("category_id") == seed_category:
+                self._add_score(score_cards, product_id, 3.0, "same_category", "product_context")
+            if seed_brand is not None and product.get("brand_id") == seed_brand:
+                self._add_score(score_cards, product_id, 1.5, "same_brand", "product_context")
+            price = self._to_decimal(product.get("base_price"))
+            if seed_price is not None and price is not None and self._is_within_band(price, seed_price, 0.2):
+                self._add_score(score_cards, product_id, 1.2, "price_band_match", "product_context")
+
+    def _apply_graph_neighbors(self, score_cards, seed_product_ids, reason_code="graph_neighbor", source_key="graph_neighbor"):
+        for seed_product_id in seed_product_ids[:5]:
+            for row in self.interaction_client.fetch_product_neighbors(product_id=seed_product_id, limit=6):
+                product_id = row.get("product_id")
+                if product_id not in score_cards:
+                    continue
+                similarity_score = min(float(row.get("similarity_score", 0)) * 0.5, 6.0)
+                shared_bonus = min(float(row.get("shared_actor_count", 0)) * 0.3, 1.5)
+                self._add_score(
+                    score_cards,
+                    product_id,
+                    similarity_score + shared_bonus,
+                    reason_code,
+                    source_key,
+                )
+
+    def _apply_similar_user_products(self, score_cards, products, similar_users, *, scope_is_user):
+        for row in similar_users[:3]:
+            actor_id = row.get("actor_id")
+            similarity_score = min(float(row.get("similarity_score", 0)) * 0.15, 2.0)
+            if actor_id in (None, "") or similarity_score <= 0:
+                continue
+            if scope_is_user:
+                events = self.interaction_client.fetch_events(user_id=actor_id, limit=10)
+            else:
+                events = self.interaction_client.fetch_events(session_id=actor_id, limit=10)
+            for event in events:
+                product_id = event.get("product_id")
+                if product_id in products:
+                    self._add_score(
+                        score_cards,
+                        product_id,
+                        similarity_score,
+                        "similar_user_interest",
+                        "similar_user",
+                    )
+
+    def _rank(self, products, score_cards, *, limit, exclude_ids=None):
+        exclude_ids = exclude_ids or set()
+        ranked = []
+        for product_id, product in products.items():
+            if product_id in exclude_ids:
+                continue
+            if not product.get("has_stock", False):
+                continue
+            card = score_cards.get(product_id) or {
+                "score": 0.0,
+                "reason_codes": set(),
+                "source_signals": {},
+                "deep_model_score": None,
+                "deep_model_bonus": 0.0,
+            }
+            final_score = card["score"]
+            if final_score <= 0:
+                final_score = 0.1
+                card = {
+                    "score": final_score,
+                    "reason_codes": {"catalog_fallback"},
+                    "source_signals": {"catalog_fallback": 0.1},
+                    "deep_model_score": card.get("deep_model_score"),
+                    "deep_model_bonus": card.get("deep_model_bonus", 0.0),
+                }
+            ranked.append(
+                {
+                    "product": self._serialize_product(product),
+                    "score": round(final_score, 2),
+                    "deep_model_score": (
+                        round(float(card["deep_model_score"]), 4)
+                        if card.get("deep_model_score") is not None
+                        else None
+                    ),
+                    "reason_codes": sorted(card["reason_codes"]),
+                    "source_signals": {
+                        key: round(float(value), 2)
+                        for key, value in sorted(card["source_signals"].items())
+                    },
+                }
+            )
+        ranked.sort(
+            key=lambda item: (
+                -item["score"],
+                -self._to_float(item["product"].get("stock")),
+                item["product"]["id"],
+            )
+        )
+        return ranked[:limit]
+
+    def _apply_recent_product_bias(self, score_cards, products, profile_snapshot):
+        recent_product_ids = profile_snapshot.get("recent_viewed_product_ids", [])
+        if not recent_product_ids:
+            return
+
+        recent_categories = {
+            products[product_id].get("category_id")
+            for product_id in recent_product_ids
+            if product_id in products and products[product_id].get("category_id") is not None
+        }
+        recent_brands = {
+            products[product_id].get("brand_id")
+            for product_id in recent_product_ids
+            if product_id in products and products[product_id].get("brand_id") is not None
+        }
+
+        for product_id, product in products.items():
+            if product_id in recent_product_ids:
+                continue
+            if product.get("category_id") in recent_categories:
+                self._add_score(score_cards, product_id, 0.8, "profile_recent_view_match", "profile_recent_view")
+            if product.get("brand_id") in recent_brands:
+                self._add_score(score_cards, product_id, 0.5, "profile_recent_brand_match", "profile_recent_brand")
+
+    def _apply_behavioral_profile_bias(self, score_cards, products, profile_snapshot):
+        top_categories = {
+            row["category_id"]: float(row.get("score", 0))
+            for row in profile_snapshot.get("top_categories", [])
+            if row.get("category_id") is not None
+        }
+        top_brands = {
+            row["brand_id"]: float(row.get("score", 0))
+            for row in profile_snapshot.get("top_brands", [])
+            if row.get("brand_id") is not None
+        }
+        top_price_bands = {
+            row["price_band"]: float(row.get("score", 0))
+            for row in profile_snapshot.get("top_price_bands", [])
+            if row.get("price_band")
+        }
+        strong_product_ids = {
+            row["product_id"]: float(row.get("score", 0))
+            for row in profile_snapshot.get("strong_product_interests", [])
+            if row.get("product_id") is not None
+        }
+        recent_carted = set(profile_snapshot.get("recent_carted_product_ids", []))
+        recent_purchased = set(profile_snapshot.get("recent_purchased_product_ids", []))
+        funnel_stage = profile_snapshot.get("funnel_stage")
+        purchase_intent_score = float(profile_snapshot.get("purchase_intent_score", 0) or 0)
+
+        for product_id, product in products.items():
+            category_id = product.get("category_id")
+            brand_id = product.get("brand_id")
+            if category_id in top_categories:
+                self._add_score(
+                    score_cards,
+                    product_id,
+                    min(top_categories[category_id] * 0.18, 2.5),
+                    "profile_top_category_match",
+                    "profile_top_category",
+                )
+            if brand_id in top_brands:
+                self._add_score(
+                    score_cards,
+                    product_id,
+                    min(top_brands[brand_id] * 0.12, 1.6),
+                    "profile_top_brand_match",
+                    "profile_top_brand",
+                )
+
+            price_band = self._price_band(product.get("base_price"))
+            if price_band in top_price_bands:
+                self._add_score(
+                    score_cards,
+                    product_id,
+                    min(top_price_bands[price_band] * 0.2, 1.3),
+                    "profile_price_band_match",
+                    "profile_price_band",
+                )
+
+            if product_id in strong_product_ids:
+                self._add_score(
+                    score_cards,
+                    product_id,
+                    min(strong_product_ids[product_id] * 0.1, 1.8),
+                    "profile_strong_interest",
+                    "profile_strong_interest",
+                )
+
+            if product_id in recent_carted:
+                self._add_score(score_cards, product_id, 1.2, "profile_recent_cart_match", "profile_recent_cart")
+            if product_id in recent_purchased:
+                self._add_score(score_cards, product_id, 0.7, "profile_recent_purchase_match", "profile_recent_purchase")
+
+            if funnel_stage in {"interested", "high-intent", "buyer"} and purchase_intent_score > 0.35:
+                self._add_score(
+                    score_cards,
+                    product_id,
+                    min(purchase_intent_score * 0.9, 0.9),
+                    "profile_purchase_intent",
+                    "profile_purchase_intent",
+                )
+
+    def _serialize_product(self, product):
+        return {
+            "id": int(product["id"]),
+            "name": product.get("name"),
+            "slug": product.get("slug"),
+            "short_description": product.get("short_description"),
+            "category_id": product.get("category_id"),
+            "brand_id": product.get("brand_id"),
+            "base_price": str(product.get("base_price")),
+            "stock": product.get("stock"),
+            "has_stock": product.get("has_stock", False),
+            "tags": product.get("tags", []),
+        }
+
+    def _add_score(self, score_cards, product_id, score, reason_code, source_key):
+        if product_id not in score_cards or score <= 0:
+            return
+        score_cards[product_id]["score"] += float(score)
+        score_cards[product_id]["reason_codes"].add(reason_code)
+        score_cards[product_id]["source_signals"][source_key] = (
+            score_cards[product_id]["source_signals"].get(source_key, 0.0) + float(score)
+        )
+
+    def _to_decimal(self, value):
+        try:
+            return Decimal(str(value))
+        except (InvalidOperation, TypeError, ValueError):
+            return None
+
+    def _to_float(self, value):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _normalize_product_id(self, value):
+        try:
+            if value is None:
+                return None
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _actor_key(self, *, user_id=None, session_id=None):
+        if user_id is not None:
+            return "user:%s" % int(user_id)
+        session_text = str(session_id or "").strip()
+        if session_text:
+            return "session:%s" % session_text
+        return None
+
+    def _price_band(self, value):
+        amount = self._to_decimal(value)
+        if amount is None:
+            return None
+        if amount < Decimal("50"):
+            return "budget"
+        if amount < Decimal("150"):
+            return "mid"
+        if amount < Decimal("500"):
+            return "premium"
+        return "luxury"
+
+    def _is_within_band(self, value, pivot, tolerance_ratio):
+        tolerance = abs(pivot) * Decimal(str(tolerance_ratio))
+        return (pivot - tolerance) <= value <= (pivot + tolerance)

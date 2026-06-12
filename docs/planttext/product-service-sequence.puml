@@ -1,0 +1,29 @@
+@startuml
+title Product Service - Search And Product View
+actor User
+participant "API Gateway" as Gateway
+participant "ProductViewSet" as ProductAPI
+database "Product DB" as ProductDB
+participant "Interaction Service" as Interaction
+
+== Search products ==
+User -> Gateway: GET /api/products?search=keyword
+Gateway -> ProductAPI: list/filter query
+ProductAPI -> ProductDB: Query active products by text/category/brand
+ProductDB --> ProductAPI: product list
+ProductAPI -> Interaction: POST search_performed
+Interaction --> ProductAPI: 201 event recorded
+ProductAPI --> Gateway: products
+Gateway --> User: products
+
+== View product detail ==
+User -> Gateway: GET /api/products/{id}
+Gateway -> ProductAPI: retrieve(id)
+ProductAPI -> ProductDB: Load product + variants/category/brand
+ProductDB --> ProductAPI: product detail
+ProductAPI -> Interaction: POST product_viewed
+Interaction --> ProductAPI: 201 event recorded
+ProductAPI --> Gateway: product detail
+Gateway --> User: product detail
+@enduml
+

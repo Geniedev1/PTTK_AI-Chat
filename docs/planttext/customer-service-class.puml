@@ -1,0 +1,55 @@
+@startuml
+title Customer Service - Class Diagram
+skinparam classAttributeIconSize 0
+
+class User {
+  +id
+  +username
+  +email
+  +password
+}
+
+class Customer {
+  +id
+  +phone
+  +address
+  +city
+  +country
+  +created_at
+  +updated_at
+}
+
+class CustomerProfile {
+  +id
+  +full_name
+  +date_of_birth
+  +gender
+  +marketing_opt_in
+  +updated_at
+}
+
+class CustomerAddress {
+  +id
+  +recipient_name
+  +phone
+  +address
+  +city
+  +country
+  +is_default
+  +created_at
+  +updated_at
+}
+
+class CustomerActivityLog {
+  +id
+  +event_type
+  +metadata
+  +created_at
+}
+
+User "1" -- "1" Customer
+Customer "1" -- "0..1" CustomerProfile
+Customer "1" -- "*" CustomerAddress
+Customer "1" -- "*" CustomerActivityLog
+@enduml
+

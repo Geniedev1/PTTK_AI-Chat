@@ -1,0 +1,38 @@
+@startuml
+title Order Service - Create Order From Cart
+actor User
+participant "API Gateway" as Gateway
+participant "OrderViewSet" as OrderAPI
+participant "Cart Service" as Cart
+participant "Product Service" as Product
+database "Order DB" as OrderDB
+participant "Interaction Service" as Interaction
+
+User -> Gateway: POST /api/orders (X-Cart-Session-Key)
+Gateway -> OrderAPI: create(customer_id?, clear_cart?)
+OrderAPI -> Cart: GET /api/cart/current
+Cart --> OrderAPI: cart items, subtotal
+alt cart has items
+  OrderAPI -> Interaction: POST checkout_started
+  loop each cart item
+    OrderAPI -> Product: GET /api/products/{product_id}
+    Product --> OrderAPI: product active, stock, price
+    OrderAPI -> OrderAPI: build price/name snapshot
+  end
+  OrderAPI -> OrderDB: create Order
+  OrderAPI -> OrderDB: bulk create OrderItem
+  OrderAPI -> OrderDB: create OrderStatusHistory(PENDING)
+  opt clear_cart=true
+    OrderAPI -> Cart: POST /api/cart/clear_cart
+    Cart --> OrderAPI: cleared
+  end
+  OrderAPI -> Interaction: POST order_created
+  Interaction --> OrderAPI: 201 event
+  OrderAPI --> Gateway: 201 order + cart_cleared
+  Gateway --> User: order detail
+else cart empty
+  OrderAPI --> Gateway: 400 Cart is empty
+  Gateway --> User: error
+end
+@enduml
+

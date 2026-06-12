@@ -1,0 +1,57 @@
+{
+  "acceptance_checks": {
+    "has_500_distinct_users": true,
+    "has_minimum_8_behavior_types": true,
+    "has_required_columns": true,
+    "timestamps_present": true
+  },
+  "action_distribution": {
+    "add_to_cart": 3185,
+    "chat": 3196,
+    "checkout": 3185,
+    "click": 3997,
+    "purchase": 5422,
+    "remove_from_cart": 807,
+    "search": 3997,
+    "view": 3997
+  },
+  "distinct_action_count": 8,
+  "distinct_user_count": 500,
+  "mode": "submission",
+  "null_product_count": 7399,
+  "null_product_rate": 0.266285,
+  "output": "/app/data_user500.csv",
+  "preview_rows": [
+    {
+      "action": "search",
+      "product_id": "",
+      "timestamp": "2026-03-06T08:41:07.780726+00:00",
+      "user_id": 129
+    },
+    {
+      "action": "click",
+      "product_id": 30,
+      "timestamp": "2026-03-06T08:42:34.780726+00:00",
+      "user_id": 129
+    },
+    {
+      "action": "view",
+      "product_id": 30,
+      "timestamp": "2026-03-06T08:45:30.780726+00:00",
+      "user_id": 129
+    },
+    {
+      "action": "add_to_cart",
+      "product_id": 30,
+      "timestamp": "2026-03-06T08:49:13.780726+00:00",
+      "user_id": 129
+    },
+    {
+      "action": "checkout",
+      "product_id": "",
+      "timestamp": "2026-03-06T08:50:48.780726+00:00",
+      "user_id": 129
+    }
+  ],
+  "row_count": 27786
+}

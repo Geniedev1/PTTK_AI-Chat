@@ -1,0 +1,7 @@
+{
+  "epochs": 8,
+  "hidden_dim": 16,
+  "learning_rate": 0.01,
+  "model_type": "lstm",
+  "seed": 42
+}

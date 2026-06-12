@@ -1,0 +1,57 @@
+@startuml
+title Interaction Service - Class Diagram
+skinparam classAttributeIconSize 0
+
+class InteractionEvent {
+  +id
+  +event_id
+  +event_type
+  +user_id
+  +session_id
+  +product_id
+  +query_text
+  +source
+  +signal_weight
+  +timestamp
+  +metadata
+  +created_at
+  +save()
+}
+
+class BehaviorProfile {
+  +id
+  +user_id
+  +session_id
+  +profile_json
+  +event_count
+  +last_event_at
+  +updated_at
+  +created_at
+}
+
+class SearchQueryLog {
+  +id
+  +user_id
+  +session_id
+  +query_text
+  +result_count
+  +product_ids
+  +created_at
+}
+
+class EventAggregate {
+  +id
+  +metric_name
+  +metric_date
+  +dimension
+  +metric_value
+  +metadata
+  +updated_at
+}
+
+InteractionEvent ..> BehaviorProfile : updates identity profile
+InteractionEvent ..> SearchQueryLog : creates for search_performed
+InteractionEvent ..> EventAggregate : increments daily metric
+InteractionEvent ..> ProductModel : product_id
+InteractionEvent ..> Customer : user_id
+@enduml

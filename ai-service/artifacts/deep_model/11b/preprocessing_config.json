@@ -1,0 +1,92 @@
+{
+  "categorical_fields": [
+    "scope_type",
+    "item_category_id",
+    "item_brand_id",
+    "item_product_type_id",
+    "item_price_band",
+    "actor_top_category_id",
+    "actor_top_brand_id"
+  ],
+  "categorical_offsets": {
+    "actor_top_brand_id": 20,
+    "actor_top_category_id": 19,
+    "item_brand_id": 16,
+    "item_category_id": 15,
+    "item_price_band": 18,
+    "item_product_type_id": 17,
+    "scope_type": 14
+  },
+  "categorical_vocab": {
+    "actor_top_brand_id": {
+      "1": 0
+    },
+    "actor_top_category_id": {
+      "1": 0
+    },
+    "item_brand_id": {
+      "1": 0
+    },
+    "item_category_id": {
+      "1": 0
+    },
+    "item_price_band": {
+      "luxury": 0
+    },
+    "item_product_type_id": {
+      "1": 0
+    },
+    "scope_type": {
+      "user": 0
+    }
+  },
+  "input_dim": 21,
+  "numeric_fields": [
+    "actor_purchase_intent_pre",
+    "actor_event_count_1d",
+    "actor_event_count_7d",
+    "actor_event_count_30d",
+    "actor_view_count_7d",
+    "actor_click_count_7d",
+    "actor_cart_count_7d",
+    "actor_purchase_count_30d",
+    "actor_item_event_count_30d",
+    "item_popularity_pre",
+    "interaction_overlap_pre",
+    "graph_neighbor_score_pre",
+    "item_has_stock",
+    "item_is_active"
+  ],
+  "numeric_means": {
+    "actor_cart_count_7d": 0.0,
+    "actor_click_count_7d": 0.25,
+    "actor_event_count_1d": 1.0,
+    "actor_event_count_30d": 1.5,
+    "actor_event_count_7d": 1.5,
+    "actor_item_event_count_30d": 0.0,
+    "actor_purchase_count_30d": 0.0,
+    "actor_purchase_intent_pre": 0.0275,
+    "actor_view_count_7d": 0.25,
+    "graph_neighbor_score_pre": 0.0,
+    "interaction_overlap_pre": 0.0,
+    "item_has_stock": 1.0,
+    "item_is_active": 1.0,
+    "item_popularity_pre": 0.1
+  },
+  "numeric_stds": {
+    "actor_cart_count_7d": 1.0,
+    "actor_click_count_7d": 0.4330127018922193,
+    "actor_event_count_1d": 1.0,
+    "actor_event_count_30d": 0.8660254037844386,
+    "actor_event_count_7d": 0.8660254037844386,
+    "actor_item_event_count_30d": 1.0,
+    "actor_purchase_count_30d": 1.0,
+    "actor_purchase_intent_pre": 0.047631397208144126,
+    "actor_view_count_7d": 0.4330127018922193,
+    "graph_neighbor_score_pre": 1.0,
+    "interaction_overlap_pre": 1.0,
+    "item_has_stock": 1.0,
+    "item_is_active": 1.0,
+    "item_popularity_pre": 0.17320508075688776
+  }
+}

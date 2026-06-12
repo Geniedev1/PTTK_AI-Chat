@@ -1,0 +1,28 @@
+@startuml
+title Interaction Service - Record Event And Analytics
+participant "Source Service" as Source
+participant "InteractionEventViewSet" as InteractionAPI
+database "Interaction DB" as DB
+database "Neo4j Graph" as Graph
+actor Analyst
+
+== Record event ==
+Source -> InteractionAPI: POST /api/interactions/events
+InteractionAPI -> DB: create InteractionEvent
+DB --> InteractionAPI: event saved with signal_weight
+InteractionAPI -> DB: get_or_create BehaviorProfile, increment event_count
+alt event_type == search_performed
+  InteractionAPI -> DB: create SearchQueryLog
+end
+InteractionAPI -> DB: get_or_create EventAggregate, increment metric_value
+InteractionAPI -> Graph: sync_interaction_event(event)
+Graph --> InteractionAPI: synced
+InteractionAPI --> Source: 201 event
+
+== Analytics ==
+Analyst -> InteractionAPI: GET /api/interactions/events/data_quality
+InteractionAPI -> DB: aggregate event quality metrics
+DB --> InteractionAPI: counts
+InteractionAPI --> Analyst: analytics result
+@enduml
+

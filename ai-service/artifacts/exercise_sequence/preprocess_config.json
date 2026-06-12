@@ -1,0 +1,20 @@
+{
+  "action_vocab": {
+    "PAD": 0,
+    "add_to_cart": 3,
+    "chat": 8,
+    "checkout": 5,
+    "click": 2,
+    "purchase": 6,
+    "remove_from_cart": 4,
+    "search": 7,
+    "view": 1
+  },
+  "category_id_scale": 8.0,
+  "max_sequence_length": 12,
+  "min_history": 2,
+  "prediction_horizon": 3,
+  "product_id_scale": 30.0,
+  "session_position_clip": 50.0,
+  "time_delta_hours_clip": 336.0
+}

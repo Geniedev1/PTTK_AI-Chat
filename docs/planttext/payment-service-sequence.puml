@@ -1,0 +1,49 @@
+@startuml
+title Payment Service - Create, Confirm, Refund
+actor User
+participant "API Gateway" as Gateway
+participant "PaymentViewSet" as PaymentAPI
+participant "Order Service" as Order
+database "Payment DB" as PaymentDB
+participant "Interaction Service" as Interaction
+
+== Create payment ==
+User -> Gateway: POST /api/payments
+Gateway -> PaymentAPI: create(order_id, customer_id/session_key, provider)
+PaymentAPI -> PaymentAPI: check idempotency_key
+PaymentAPI -> Order: GET /api/orders/{order_id}
+Order --> PaymentAPI: order detail
+alt order is payable
+  PaymentAPI -> PaymentDB: create Payment
+  PaymentAPI -> PaymentDB: create PaymentMethod
+  PaymentAPI -> PaymentDB: create PaymentTransaction(AUTHORIZE)
+  PaymentAPI -> Interaction: POST payment_started
+  Interaction --> PaymentAPI: 201 event
+  PaymentAPI --> Gateway: 201 payment
+  Gateway --> User: payment
+else order closed/not found
+  PaymentAPI --> Gateway: 400/404 error
+  Gateway --> User: error
+end
+
+== Confirm payment ==
+User -> Gateway: POST /api/payments/{id}/confirm
+Gateway -> PaymentAPI: confirm(id)
+PaymentAPI -> PaymentDB: transition Payment -> PAID
+PaymentAPI -> Order: POST /api/orders/{order_id}/update_status(PAID)
+Order --> PaymentAPI: order paid
+PaymentAPI -> PaymentDB: create PaymentTransaction(CAPTURE)
+PaymentAPI -> Interaction: POST payment_paid
+PaymentAPI --> Gateway: paid payment
+Gateway --> User: paid payment
+
+== Refund payment ==
+User -> Gateway: POST /api/payments/{id}/refund
+Gateway -> PaymentAPI: refund(reason)
+PaymentAPI -> PaymentDB: transition Payment -> REFUNDED
+PaymentAPI -> PaymentDB: create PaymentRefund + PaymentTransaction(REFUND)
+PaymentAPI -> Interaction: POST payment_refunded
+PaymentAPI --> Gateway: refunded payment
+Gateway --> User: refunded payment
+@enduml
+

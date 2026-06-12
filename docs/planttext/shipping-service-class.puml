@@ -1,0 +1,65 @@
+@startuml
+title Shipping Service - Class Diagram
+skinparam classAttributeIconSize 0
+
+class Shipment {
+  +id
+  +order_id
+  +customer_id
+  +session_key
+  +recipient_name
+  +phone
+  +address
+  +city
+  +country
+  +carrier
+  +tracking_number
+  +shipping_fee
+  +status
+  +failure_reason
+  +shipped_at
+  +delivered_at
+  +cancelled_at
+  +created_at
+  +updated_at
+  +can_transition_to(new_status)
+}
+
+class ShipmentAddress {
+  +id
+  +recipient_name
+  +phone
+  +address
+  +city
+  +country
+  +created_at
+}
+
+class ShipmentTrackingEvent {
+  +id
+  +status
+  +location
+  +description
+  +event_time
+  +metadata
+}
+
+class ShippingRate {
+  +id
+  +carrier
+  +city
+  +country
+  +base_fee
+  +estimated_days_min
+  +estimated_days_max
+  +is_active
+  +created_at
+  +updated_at
+}
+
+Shipment "1" -- "0..1" ShipmentAddress
+Shipment "1" -- "*" ShipmentTrackingEvent
+Shipment ..> Order : order_id
+Shipment ..> Customer : customer_id
+ShippingRate ..> Shipment : carrier/city/country
+@enduml

@@ -1,0 +1,52 @@
+@startuml
+title Staff Service - Class Diagram
+skinparam classAttributeIconSize 0
+
+class User {
+  +id
+  +username
+  +email
+  +password
+}
+
+class Staff {
+  +id
+  +name
+  +email
+  +phone
+  +position
+  +created_at
+  +updated_at
+}
+
+class StaffProfile {
+  +id
+  +department
+  +bio
+  +avatar_url
+  +updated_at
+}
+
+class StaffRoleAssignment {
+  +id
+  +role_name
+  +scope
+  +is_active
+  +assigned_at
+}
+
+class StaffActivityLog {
+  +id
+  +action
+  +target_type
+  +target_id
+  +metadata
+  +created_at
+}
+
+User "0..1" -- "1" Staff
+Staff "1" -- "0..1" StaffProfile
+Staff "1" -- "*" StaffRoleAssignment
+Staff "1" -- "*" StaffActivityLog
+@enduml
+

@@ -1,0 +1,30 @@
+{
+  "feature_version": "plan11a-v1",
+  "label_event_scores": {
+    "cart_item_added": 0.7,
+    "order_completed": 1.0,
+    "order_paid": 1.0,
+    "product_clicked": 0.4,
+    "product_viewed": 0.2
+  },
+  "label_window_days": 14,
+  "plan": "11A",
+  "record_count": 7,
+  "sample_unit": "actor_item",
+  "split": {
+    "actor_count": 5,
+    "actor_split_counts": {
+      "test": 1,
+      "train": 3,
+      "valid": 1
+    },
+    "split_method": "time_based_actor_bucket",
+    "test_ratio": 0.15000000000000005,
+    "time_boundaries": {
+      "train_end": "2026-04-07T15:47:02.407763+00:00",
+      "valid_end": "2026-04-09T15:47:02.407763+00:00"
+    },
+    "train_ratio": 0.7,
+    "valid_ratio": 0.15
+  }
+}

@@ -1,0 +1,47 @@
+@startuml
+title Shipping Service - Create And Deliver Shipment
+actor Staff
+participant "API Gateway" as Gateway
+participant "ShipmentViewSet" as ShippingAPI
+participant "Order Service" as Order
+database "Shipping DB" as ShippingDB
+participant "Interaction Service" as Interaction
+
+== Create shipment ==
+Staff -> Gateway: POST /api/shipping/shipments
+Gateway -> ShippingAPI: create(order_id, address)
+ShippingAPI -> ShippingAPI: check existing shipment by order_id
+ShippingAPI -> Order: GET /api/orders/{order_id}
+Order --> ShippingAPI: order detail
+alt order.status == PAID
+  ShippingAPI -> ShippingDB: create Shipment
+  ShippingAPI -> ShippingDB: create ShipmentAddress
+  ShippingAPI -> ShippingDB: create ShipmentTrackingEvent(PENDING)
+  ShippingAPI -> Interaction: POST shipment_created
+  Interaction --> ShippingAPI: 201 event
+  ShippingAPI --> Gateway: 201 shipment
+  Gateway --> Staff: shipment
+else order is not paid
+  ShippingAPI --> Gateway: 400 Shipment requires paid order
+  Gateway --> Staff: error
+end
+
+== Ship and deliver ==
+Staff -> Gateway: POST /api/shipping/shipments/{id}/ship
+Gateway -> ShippingAPI: ship(id)
+ShippingAPI -> ShippingDB: transition Shipment -> SHIPPED, generate tracking_number
+ShippingAPI -> ShippingDB: create TrackingEvent(SHIPPED)
+ShippingAPI -> Interaction: POST shipment_shipped
+ShippingAPI --> Gateway: shipped shipment
+Gateway --> Staff: shipped shipment
+
+Staff -> Gateway: POST /api/shipping/shipments/{id}/deliver
+Gateway -> ShippingAPI: deliver(id)
+ShippingAPI -> ShippingDB: transition Shipment -> DELIVERED
+ShippingAPI -> Order: POST /api/orders/{order_id}/update_status(COMPLETED)
+Order --> ShippingAPI: order completed
+ShippingAPI -> Interaction: POST shipment_delivered
+ShippingAPI --> Gateway: delivered shipment
+Gateway --> Staff: delivered shipment
+@enduml
+

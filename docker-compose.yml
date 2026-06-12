@@ -1,0 +1,455 @@
+services:
+
+  # ============= API GATEWAY =============
+  api-gateway:
+    build: ./api-gateway
+    container_name: api-gateway
+    environment:
+      STAFF_SERVICE_URL: http://staff-service:8001
+      CUSTOMER_SERVICE_URL: http://customer-service:8002
+      CART_SERVICE_URL: http://cart-service:8003
+      PRODUCT_SERVICE_URL: http://product-service:8004
+      ORDER_SERVICE_URL: http://order-service:8005
+      INTERACTION_SERVICE_URL: http://interaction-service:8006
+      AI_SERVICE_URL: http://ai-service:8007
+      PAYMENT_SERVICE_URL: http://payment-service:8008
+      SHIPPING_SERVICE_URL: http://shipping-service:8009
+      ALLOWED_HOSTS: "*"
+      PROXY_TIMEOUT: 30
+      CORS_ALLOWED_ORIGINS: http://localhost:5173,http://127.0.0.1:5173,http://localhost,http://127.0.0.1
+    ports:
+      - "80:80"
+    depends_on:
+      - staff-service
+      - customer-service
+      - cart-service
+      - product-service
+      - order-service
+      - interaction-service
+      - ai-service
+      - payment-service
+      - shipping-service
+    networks:
+      - microservice-network
+    volumes:
+      - ./api-gateway:/app
+
+  # ============= DATABASES =============
+  
+  # MySQL for Staff Service
+  staff-db:
+    image: mysql:8.0
+    container_name: staff-db
+    command:
+      - --innodb-buffer-pool-size=128M
+      - --innodb-log-buffer-size=8M
+      - --performance_schema=OFF
+      - --max_connections=60
+    environment:
+      MYSQL_ROOT_PASSWORD: password
+      MYSQL_DATABASE: staff_db
+      MYSQL_INITDB_SKIP_TZINFO: "1"
+    restart: unless-stopped
+    volumes:
+      - staff_db_volume:/var/lib/mysql
+    ports:
+      - "3306:3306"
+    networks:
+      - microservice-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+
+  # MySQL for Customer Service
+  customer-db:
+    image: mysql:8.0
+    container_name: customer-db
+    command:
+      - --innodb-buffer-pool-size=128M
+      - --innodb-log-buffer-size=8M
+      - --performance_schema=OFF
+      - --max_connections=60
+    environment:
+      MYSQL_ROOT_PASSWORD: password
+      MYSQL_DATABASE: customer_db
+      MYSQL_INITDB_SKIP_TZINFO: "1"
+    restart: unless-stopped
+    volumes:
+      - customer_db_volume:/var/lib/mysql
+    ports:
+      - "3307:3306"
+    networks:
+      - microservice-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+
+  # PostgreSQL for Cart Service
+  cart-db:
+    image: postgres:15-alpine
+    container_name: cart-db
+    environment:
+      POSTGRES_DB: cart_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - cart_db_volume:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - microservice-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      timeout: 20s
+      retries: 10
+
+  # PostgreSQL for Product Service
+  product-db:
+    image: postgres:15-alpine
+    container_name: product-db
+    environment:
+      POSTGRES_DB: product_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - product_db_volume:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    networks:
+      - microservice-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      timeout: 20s
+      retries: 10
+
+  # PostgreSQL for Order Service
+  order-db:
+    image: postgres:15-alpine
+    container_name: order-db
+    environment:
+      POSTGRES_DB: order_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - order_db_volume:/var/lib/postgresql/data
+    ports:
+      - "5434:5432"
+    networks:
+      - microservice-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      timeout: 20s
+      retries: 10
+
+  # PostgreSQL for Payment Service
+  payment-db:
+    image: postgres:15-alpine
+    container_name: payment-db
+    environment:
+      POSTGRES_DB: payment_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - payment_db_volume:/var/lib/postgresql/data
+    ports:
+      - "5436:5432"
+    networks:
+      - microservice-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      timeout: 20s
+      retries: 10
+
+  # PostgreSQL for Shipping Service
+  shipping-db:
+    image: postgres:15-alpine
+    container_name: shipping-db
+    environment:
+      POSTGRES_DB: shipping_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - shipping_db_volume:/var/lib/postgresql/data
+    ports:
+      - "5437:5432"
+    networks:
+      - microservice-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      timeout: 20s
+      retries: 10
+
+  # PostgreSQL for Interaction Service
+  interaction-db:
+    image: postgres:15-alpine
+    container_name: interaction-db
+    environment:
+      POSTGRES_DB: interaction_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - interaction_db_volume:/var/lib/postgresql/data
+    ports:
+      - "5435:5432"
+    networks:
+      - microservice-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      timeout: 20s
+      retries: 10
+
+  # Neo4j for Knowledge Graph
+  knowledge-graph-db:
+    image: neo4j:5.19
+    container_name: knowledge-graph-db
+    environment:
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-neo4jpassword}
+      NEO4J_server_memory_heap_initial__size: 128m
+      NEO4J_server_memory_heap_max__size: 256m
+      NEO4J_server_memory_pagecache_size: 128m
+    restart: unless-stopped
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    networks:
+      - microservice-network
+    volumes:
+      - knowledge_graph_volume:/data
+
+  # ============= DJANGO SERVICES =============
+
+  # Staff Service
+  staff-service:
+    build: ./staff-service
+    container_name: staff-service
+    environment:
+      INTERNAL_ADMIN_KEY: ${INTERNAL_ADMIN_KEY:-change-this-in-dev}
+      DB_NAME: staff_db
+      DB_USER: root
+      DB_PASSWORD: password
+      DB_HOST: staff-db
+      DB_PORT: 3306
+    ports:
+      - "8001:8001"
+    depends_on:
+      staff-db:
+        condition: service_healthy
+    networks:
+      - microservice-network
+    volumes:
+      - ./staff-service:/app
+
+  # Customer Service
+  customer-service:
+    build: ./customer-service
+    container_name: customer-service
+    environment:
+      DB_NAME: customer_db
+      DB_USER: root
+      DB_PASSWORD: password
+      DB_HOST: customer-db
+      DB_PORT: 3306
+    ports:
+      - "8002:8002"
+    depends_on:
+      customer-db:
+        condition: service_healthy
+    networks:
+      - microservice-network
+    volumes:
+      - ./customer-service:/app
+
+  # Cart Service
+  cart-service:
+    build: ./cart-service
+    container_name: cart-service
+    environment:
+      DB_NAME: cart_db
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_HOST: cart-db
+      DB_PORT: 5432
+      PRODUCT_SERVICE_URL: http://product-service:8004
+      INTERACTION_SERVICE_URL: http://interaction-service:8006
+    ports:
+      - "8003:8003"
+    depends_on:
+      cart-db:
+        condition: service_healthy
+    networks:
+      - microservice-network
+    volumes:
+      - ./cart-service:/app
+
+  # Product Service
+  product-service:
+    build: ./product-service
+    container_name: product-service
+    environment:
+      INTERNAL_ADMIN_KEY: ${INTERNAL_ADMIN_KEY:-change-this-in-dev}
+      DB_NAME: product_db
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_HOST: product-db
+      DB_PORT: 5432
+      ALLOWED_HOSTS: "*"
+      INTERACTION_SERVICE_URL: http://interaction-service:8006
+    ports:
+      - "8004:8004"
+    depends_on:
+      product-db:
+        condition: service_healthy
+    networks:
+      - microservice-network
+    volumes:
+      - ./product-service:/app
+
+  # Order Service
+  order-service:
+    build: ./order-service
+    container_name: order-service
+    environment:
+      INTERNAL_ADMIN_KEY: ${INTERNAL_ADMIN_KEY:-change-this-in-dev}
+      DB_NAME: order_db
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_HOST: order-db
+      DB_PORT: 5432
+      CART_SERVICE_URL: http://cart-service:8003
+      PRODUCT_SERVICE_URL: http://product-service:8004
+      INTERACTION_SERVICE_URL: http://interaction-service:8006
+    ports:
+      - "8005:8005"
+    depends_on:
+      order-db:
+        condition: service_healthy
+    networks:
+      - microservice-network
+    volumes:
+      - ./order-service:/app
+
+  # Payment Service
+  payment-service:
+    build: ./payment-service
+    container_name: payment-service
+    environment:
+      INTERNAL_ADMIN_KEY: ${INTERNAL_ADMIN_KEY:-change-this-in-dev}
+      DB_NAME: payment_db
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_HOST: payment-db
+      DB_PORT: 5432
+      ORDER_SERVICE_URL: http://order-service:8005
+      INTERACTION_SERVICE_URL: http://interaction-service:8006
+    ports:
+      - "8008:8008"
+    depends_on:
+      payment-db:
+        condition: service_healthy
+      order-service:
+        condition: service_started
+    networks:
+      - microservice-network
+    volumes:
+      - ./payment-service:/app
+
+  # Shipping Service
+  shipping-service:
+    build: ./shipping-service
+    container_name: shipping-service
+    environment:
+      INTERNAL_ADMIN_KEY: ${INTERNAL_ADMIN_KEY:-change-this-in-dev}
+      DB_NAME: shipping_db
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_HOST: shipping-db
+      DB_PORT: 5432
+      ORDER_SERVICE_URL: http://order-service:8005
+      INTERACTION_SERVICE_URL: http://interaction-service:8006
+    ports:
+      - "8009:8009"
+    depends_on:
+      shipping-db:
+        condition: service_healthy
+      order-service:
+        condition: service_started
+    networks:
+      - microservice-network
+    volumes:
+      - ./shipping-service:/app
+
+  # Interaction Service
+  interaction-service:
+    build: ./interaction-service
+    container_name: interaction-service
+    environment:
+      DB_NAME: interaction_db
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_HOST: interaction-db
+      DB_PORT: 5432
+      PRODUCT_SERVICE_URL: http://product-service:8004
+      INTERNAL_ADMIN_KEY: ${INTERNAL_ADMIN_KEY:-change-this-in-dev}
+      NEO4J_URI: bolt://knowledge-graph-db:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-neo4jpassword}
+      GRAPH_SYNC_ON_WRITE: ${GRAPH_SYNC_ON_WRITE:-true}
+    ports:
+      - "8006:8006"
+    depends_on:
+      interaction-db:
+        condition: service_healthy
+      product-service:
+        condition: service_started
+      knowledge-graph-db:
+        condition: service_started
+    networks:
+      - microservice-network
+    volumes:
+      - ./interaction-service:/app
+
+  # AI Service
+  ai-service:
+    build: ./ai-service
+    container_name: ai-service
+    environment:
+      PRODUCT_SERVICE_URL: http://product-service:8004
+      CART_SERVICE_URL: http://cart-service:8003
+      ORDER_SERVICE_URL: http://order-service:8005
+      INTERACTION_SERVICE_URL: http://interaction-service:8006
+      INTERNAL_ADMIN_KEY: ${INTERNAL_ADMIN_KEY:-change-this-in-dev}
+      ALLOWED_HOSTS: "*"
+      REQUEST_TIMEOUT_SECONDS: 10
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_CHAT_MODEL: ${OPENAI_CHAT_MODEL:-gpt-5-mini}
+      OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
+    ports:
+      - "8007:8007"
+    depends_on:
+      product-service:
+        condition: service_started
+      cart-service:
+        condition: service_started
+      interaction-service:
+        condition: service_started
+    networks:
+      - microservice-network
+    volumes:
+      - ./ai-service:/app
+
+networks:
+  microservice-network:
+    driver: bridge
+
+volumes:
+  staff_db_volume:
+  customer_db_volume:
+  cart_db_volume:
+  product_db_volume:
+  order_db_volume:
+  payment_db_volume:
+  shipping_db_volume:
+  interaction_db_volume:
+  knowledge_graph_volume:

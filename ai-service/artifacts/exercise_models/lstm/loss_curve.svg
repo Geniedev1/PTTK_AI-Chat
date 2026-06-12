@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="320" viewBox="0 0 720 320">
+<rect width="720" height="320" fill="#fffdf7"/>
+<text x="40" y="24" font-size="18" font-family="Arial" fill="#1c1c1c">LSTM loss</text>
+<line x1="40" y1="280" x2="680" y2="280" stroke="#666"/>
+<line x1="40" y1="40" x2="40" y2="280" stroke="#666"/>
+<polyline fill="none" stroke="#005f73" stroke-width="3" points="40.0,54.6 131.4,209.9 222.9,258.6 314.3,254.3 405.7,272.6 497.1,261.2 588.6,280.0 680.0,278.1"/>
+<polyline fill="none" stroke="#ca6702" stroke-width="3" points="40.0,40.0 131.4,195.9 222.9,240.3 314.3,232.3 405.7,255.1 497.1,251.7 588.6,267.5 680.0,259.2"/>
+<text x="550" y="40" font-size="12" font-family="Arial" fill="#005f73">train_loss</text>
+<text x="550" y="58" font-size="12" font-family="Arial" fill="#ca6702">valid_loss</text>
+</svg>

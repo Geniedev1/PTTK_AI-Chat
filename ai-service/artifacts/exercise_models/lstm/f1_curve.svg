@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="320" viewBox="0 0 720 320">
+<rect width="720" height="320" fill="#fffdf7"/>
+<text x="40" y="24" font-size="18" font-family="Arial" fill="#1c1c1c">LSTM F1</text>
+<line x1="40" y1="280" x2="680" y2="280" stroke="#666"/>
+<line x1="40" y1="40" x2="40" y2="280" stroke="#666"/>
+<polyline fill="none" stroke="#005f73" stroke-width="3" points="40.0,53.9 131.4,91.2 222.9,47.8 314.3,53.1 405.7,45.4 497.1,53.1 588.6,46.2 680.0,40.0"/>
+<polyline fill="none" stroke="#ca6702" stroke-width="3" points="40.0,276.1 131.4,280.0 222.9,276.1 314.3,276.1 405.7,276.1 497.1,276.1 588.6,276.1 680.0,276.1"/>
+<text x="550" y="40" font-size="12" font-family="Arial" fill="#005f73">train_f1</text>
+<text x="550" y="58" font-size="12" font-family="Arial" fill="#ca6702">valid_f1</text>
+</svg>

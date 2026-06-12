@@ -1,0 +1,40 @@
+@startuml
+title AI Service - Recommendation And Chat
+actor User
+participant "API Gateway" as Gateway
+participant "AI Recommendation API" as AI
+participant "RecommendationService" as RecService
+participant "Interaction Service" as Interaction
+participant "Product Service" as Product
+participant "Cart Service" as Cart
+participant "Order Service" as Order
+database "AI DB" as AIDB
+
+== Home recommendations ==
+User -> Gateway: GET /api/ai/recommendations/home
+Gateway -> AI: home(user_id/session_id, limit)
+AI -> RecService: recommend_home()
+RecService -> Interaction: GET profile/events
+Interaction --> RecService: behavior signals
+RecService -> Product: GET product catalog
+Product --> RecService: candidate products
+RecService -> RecService: score heuristic + deep model when available
+RecService -> AIDB: save RecommendationRequest + Results
+RecService --> AI: ranked recommendations
+AI --> Gateway: recommendation payload
+Gateway --> User: recommendations
+
+== Chat assistant ==
+User -> Gateway: POST /api/ai/chat
+Gateway -> AI: chat(message, session)
+AI -> AIDB: save ChatMessage(user)
+AI -> Cart: optional read current cart
+AI -> Order: optional read orders
+AI -> Product: optional product lookup/search
+AI -> Interaction: optional profile/events lookup
+AI -> AI: compose answer with retrieved context
+AI -> AIDB: save ChatMessage(assistant)
+AI --> Gateway: assistant answer
+Gateway --> User: assistant answer
+@enduml
+
