@@ -23,6 +23,7 @@ Thu muc nay chua roadmap trien khai theo thu tu uu tien thuc te cho repo hien ta
 17. [12b-chat-grounding-evaluation.md](./12b-chat-grounding-evaluation.md)
 18. [13-defense-demo-readiness.md](./13-defense-demo-readiness.md)
 19. [14-cart-abandonment-behavioral-roadmap.md](./14-cart-abandonment-behavioral-roadmap.md)
+20. [15-cart-abandonment-full-integration-plan.md](./15-cart-abandonment-full-integration-plan.md)
 
 ## Thu tu trien khai
 
@@ -59,3 +60,4 @@ Y nghia:
 - Plan 08 duoc giu vai tro bridge runtime; Plan 11 va 12 giu vai tro umbrella, con thuc thi chi tiet duoc tach thanh 11A-11C va 12A-12B de de quan ly scope va tang diem rubric.
 - GNN, GraphRAG nang, SPD, va huong research sau DoD tiep tuc duoc de sau Plan 13.
 - Plan 14 la tai lieu tham khao (khong thuc thi ngay trong scope hien tai): tong hop thu tu trien khai AI/Behavioral khuyen nghi cho mot he thong moi, va chon Cart Abandonment Prediction lam tinh nang ML flagship tiep theo.
+- Plan 15 la ban day du end-to-end (idea -> data -> train -> serve) cho Cart Abandonment Prediction ap dung vao mot he thong moi, trong tam la chien luoc du lieu cho bai toan cold-start va canh bao circular synthetic data trap.
